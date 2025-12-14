@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Qubit Bloch Sphere Visualizer</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <!-- MathJax for LaTeX rendering -->
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      width: 100%;
+      overflow: hidden;
+      background: #05060a;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text",
+        "Segoe UI", sans-serif;
+    }
+
+    #app {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+    }
+
+    /* Canvas */
+    #canvas-container {
+      position: absolute;
+      inset: 0;
+    }
+
+    /* Title Bar */
+    #title-bar {
+      position: absolute;
+      left: 20px;
+      top: 20px;
+      z-index: 10;
+      color: #e6e8ff;
+      font-size: 0.9rem;
+      opacity: 0.85;
+      letter-spacing: 0.08em;
+    }
+    #title-bar span {
+      display: block;
+      font-size: 0.7rem;
+      opacity: 0.8;
+    }
+
+    /* Right Control Panel */
+    #controls-panel {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      width: 300px; /* widened a bit */
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      z-index: 10;
+      color: #f5f5f5;
+    }
+
+    .controls-section {
+      background: rgba(10, 12, 20, 0.92);
+      border-radius: 12px;
+      padding: 10px 12px;
+      border: 1px solid rgba(120, 130, 180, 0.4);
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
+      backdrop-filter: blur(8px);
+    }
+
+    .controls-header {
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #9da4ff;
+      margin-bottom: 8px;
+    }
+
+    /* Gate Buttons */
+
+    .gate-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 6px;
+    }
+
+    .gate-group-label {
+      width: 64px;
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      color: #888fb5;
+    }
+
+    .gate-btn {
+      min-width: 34px;
+      padding: 6px 10px;
+      border-radius: 8px;
+      border: 1px solid rgba(180, 190, 255, 0.4);
+      background: radial-gradient(circle at 20% 0%, #262b3f, #171927);
+      color: #f7f7ff;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: 0.15s ease;
+    }
+    .gate-btn:hover {
+      transform: translateY(-1px);
+      border-color: rgba(220, 230, 255, 0.9);
+      box-shadow: 0 6px 18px rgba(0,0,0,0.6);
+    }
+
+    /* Gate Colors */
+    .gate-x { border-color: rgba(255, 111, 111, 0.8); }
+    .gate-y { border-color: rgba(111, 255, 171, 0.8); }
+    .gate-z { border-color: rgba(120, 181, 255, 0.8); }
+    .gate-h { border-color: rgba(199, 148, 255, 0.85); }
+    .gate-s { border-color: rgba(148, 233, 255, 0.85); }
+    .gate-t { border-color: rgba(255, 222, 145, 0.85); }
+
+    /* Secondary Buttons */
+
+    .controls-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .secondary-btn {
+      flex: 1;
+      padding: 6px 10px;
+      border-radius: 8px;
+      background: linear-gradient(135deg, #1b1f2b, #131623);
+      border: 1px solid rgba(110, 120, 160, 0.9);
+      color: #f5f5f5;
+      font-size: 0.78rem;
+      cursor: pointer;
+      transition: 0.15s ease;
+    }
+
+    .secondary-btn:hover {
+      transform: translateY(-1px);
+      background: #272b3a;
+    }
+
+    /* Toggle */
+
+    .toggle-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      font-size: 0.78rem;
+      color: #d0d4ff;
+    }
+    .toggle-label input { display: none; }
+
+    .toggle-slider {
+      width: 36px;
+      height: 18px;
+      border-radius: 99px;
+      background: #30354a;
+      position: relative;
+      transition: background 0.2s;
+    }
+
+    .toggle-slider::before {
+      content: "";
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: #f5f5ff;
+      transition: transform 0.2s;
+    }
+
+    .toggle-label input:checked + .toggle-slider {
+      background: #5a7bff;
+    }
+
+    .toggle-label input:checked + .toggle-slider::before {
+      transform: translateX(18px);
+    }
+
+    /* State Display */
+
+    .state-display-row {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-top: 6px;
+    }
+
+    .state-display,
+    .bloch-display {
+      font-family: "SF Mono", Menlo, monospace;
+      font-size: 0.7rem;
+      padding: 4px 6px;
+      border-radius: 6px;
+      background: rgba(10,12,20,0.9);
+      border: 1px solid rgba(90,100,150,0.6);
+      color: #e0e4ff;
+      min-height: 28px;
+
+      /* keep LaTeX inside the box */
+      overflow-x: auto;
+      white-space: nowrap;
+      box-sizing: border-box;
+      max-width: 100%;
+    }
+
+    /* Make MathJax containers behave inside the box */
+    .state-display mjx-container,
+    .bloch-display mjx-container {
+      max-width: 100%;
+    }
+
+    /* Tooltip */
+
+    #gate-tooltip {
+      position: fixed;
+      padding: 8px 12px;
+      max-width: 260px;
+      border-radius: 8px;
+      background: rgba(20, 22, 35, 0.95);
+      border: 1px solid rgba(120,130,180,0.5);
+      color: #e7e9ff;
+      backdrop-filter: blur(6px);
+      box-shadow: 0 8px 22px rgba(0,0,0,0.45);
+      opacity: 0;
+      pointer-events: none;
+      z-index: 9999;
+      transition: opacity 0.18s ease;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="app">
+    <div id="canvas-container"></div>
+
+    <div id="title-bar">
+      Bloch Sphere Visualizer
+      <span>Single-qubit rotations & state evolution</span>
+      <span>Created by Owen Lee</span>
+    </div>
+
+    <!-- Right-side control panel -->
+    <div id="controls-panel">
+
+      <!-- Gates -->
+      <div class="controls-section">
+        <div class="controls-header">Gates</div>
+
+        <div class="gate-row">
+          <span class="gate-group-label">Pauli</span>
+          <button class="gate-btn gate-x" data-gate="X">X</button>
+          <button class="gate-btn gate-y" data-gate="Y">Y</button>
+          <button class="gate-btn gate-z" data-gate="Z">Z</button>
+        </div>
+
+        <div class="gate-row">
+          <span class="gate-group-label">Clifford</span>
+          <button class="gate-btn gate-h" data-gate="H">H</button>
+          <button class="gate-btn gate-s" data-gate="S">S</button>
+        </div>
+
+        <div class="gate-row">
+          <span class="gate-group-label">T-gate</span>
+          <button class="gate-btn gate-t" data-gate="T">T</button>
+        </div>
+      </div>
+
+      <!-- State Controls -->
+      <div class="controls-section">
+        <div class="controls-header">State & Controls</div>
+
+        <div class="controls-row">
+          <button class="secondary-btn" id="resetBtn">Reset |0⟩</button>
+          <button class="secondary-btn" data-gate="RESET1">Set |1⟩</button>
+        </div>
+
+        <div class="controls-row">
+          <label class="toggle-label">
+            <input type="checkbox" id="animToggle" checked />
+            <span class="toggle-slider"></span>
+            Smooth Animations
+          </label>
+        </div>
+
+        <div class="state-display-row">
+          <div id="stateDisplay" class="state-display"></div>
+          <div id="blochVector" class="bloch-display"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tooltip -->
+  <div id="gate-tooltip"></div>
+
+  <!-- Main JS -->
+  <script type="module" src="./main.js"></script>
+
+  <!-- Tooltips with LaTeX -->
+  <script>
+    const gateDescriptions = {
+      X: "Pauli-X:<br>\\[ X = \\begin{pmatrix}0 & 1\\\\ 1 & 0\\end{pmatrix} \\]<br>180° rotation about X.",
+      Y: "Pauli-Y:<br>\\[ Y = \\begin{pmatrix}0 & -i\\\\ i & 0\\end{pmatrix} \\]<br>180° rotation about Y.",
+      Z: "Pauli-Z:<br>\\[ Z = \\begin{pmatrix}1 & 0\\\\ 0 & -1\\end{pmatrix} \\]<br>180° rotation about Z.",
+      H: "Hadamard:<br>\\[ H = \\tfrac{1}{\\sqrt{2}}\\begin{pmatrix}1 & 1\\\\ 1 & -1\\end{pmatrix} \\]<br>Creates superposition.",
+      S: "Phase gate S:<br>\\[ S = \\begin{pmatrix}1 & 0\\\\ 0 & i\\end{pmatrix} \\]<br>90° rotation about Z.",
+      T: "T-gate:<br>\\[ T = \\begin{pmatrix}1 & 0\\\\ 0 & e^{i\\pi/4}\\end{pmatrix} \\]<br>45° rotation about Z."
+    };
+
+    const tooltip = document.getElementById("gate-tooltip");
+    let hoverTimer = null;
+
+    document.querySelectorAll(".gate-btn").forEach(btn => {
+      const gate = btn.getAttribute("data-gate");
+
+      btn.addEventListener("mouseenter", e => {
+        hoverTimer = setTimeout(() => {
+          tooltip.innerHTML = gateDescriptions[gate] || "";
+          tooltip.style.opacity = 1;
+          if (typeof MathJax !== 'undefined') {
+            MathJax.typesetPromise([tooltip]);
+          }
+        }, 1000);
+      });
+
+      btn.addEventListener("mousemove", e => {
+        tooltip.style.left = e.clientX + 12 + "px";
+        tooltip.style.top = e.clientY + 12 + "px";
+      });
+
+      btn.addEventListener("mouseleave", () => {
+        clearTimeout(hoverTimer);
+        tooltip.style.opacity = 0;
+      });
+    });
+  </script>
+</body>
+</html>
