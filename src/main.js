@@ -17,6 +17,7 @@ import {
   PAULI_Z,
   ID2,
   CX4,
+  SWAP4,
   addRho,
   approx,
   apply4Unitary,
@@ -48,12 +49,14 @@ import {
   rhoToPureState,
   scaleRho,
   tensor2,
+  singleOn4,
   toFraction,
   trace2MatSquared,
   expectationPauliPair,
   fmtComplex,
 } from "./quantum/quantum";
 import { typesetNode } from "./utils/mathjax";
+const CX_REVERSED = mat4Mul(mat4Mul(SWAP4, CX4), SWAP4);
 
 // -------------------- App state --------------------
 const MAX_QUBITS = 10;
@@ -105,6 +108,10 @@ let measuredVisualOutcomes = []; // per-qubit latest measured result (manual or 
 let measurementAnimEnabled = true;
 let coinAnimator = null;
 let measurementAnimRunId = 0;
+let entangledPairIndices = [0, 1];
+const BLOCH_TILE_SIZE_KEY = "blochTileMinPx";
+const SETTINGS_POS_KEY = "settingsPanelPos";
+const SETTINGS_COLLAPSE_KEY = "settingsPanelCollapsed";
 let tooltipEl = null;
 let tooltipTimer = null;
 let tooltipTarget = null;
@@ -204,6 +211,7 @@ function syncQubitCountUI() {
 // -------------------- Primary splitter --------------------
 const SPLIT_STORAGE_KEY = "primarySplitLeftPx";
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+function isPairMember(q) { return q === entangledPairIndices[0] || q === entangledPairIndices[1]; }
 
 function applyStoredSplit() {
   const saved = localStorage.getItem(SPLIT_STORAGE_KEY);
@@ -211,6 +219,108 @@ function applyStoredSplit() {
   const px = Number(saved);
   if (!Number.isFinite(px) || px <= 0) return;
   document.documentElement.style.setProperty("--splitLeft", `${px}px`);
+}
+
+function applyBlochTileSize(px) {
+  const clamped = clamp(px, 160, 520);
+  document.documentElement.style.setProperty("--blochTileMin", `${clamped}px`);
+  const label = $("blochTileSizeVal");
+  if (label) label.textContent = `${clamped}px`;
+  const slider = $("blochTileSize");
+  if (slider && Number(slider.value) !== clamped) slider.value = String(clamped);
+}
+
+function initBlochTileSizer() {
+  const saved = Number(localStorage.getItem(BLOCH_TILE_SIZE_KEY));
+  const initial = Number.isFinite(saved) ? saved : 320;
+  applyBlochTileSize(initial);
+  const slider = $("blochTileSize");
+  if (slider) {
+    slider.addEventListener("input", (e) => {
+      const val = Number(e.target.value);
+      applyBlochTileSize(val);
+      localStorage.setItem(BLOCH_TILE_SIZE_KEY, String(clamp(val, 160, 520)));
+      requestAnimationFrame(resizeAllWidgets);
+    });
+  }
+}
+
+function initSettingsPanelDrag() {
+  const panel = $("blochOverlay");
+  const header = $("settingsHeader");
+  if (!panel || !header) return;
+
+  const applyPos = (pos) => {
+    panel.classList.remove("corner-tl", "corner-tr", "corner-bl", "corner-br");
+    if (pos?.corner) {
+      panel.classList.add(`corner-${pos.corner}`);
+      panel.style.left = "";
+      panel.style.top = "";
+      panel.style.right = "";
+      panel.style.bottom = "";
+    } else if (Number.isFinite(pos?.left) && Number.isFinite(pos?.top)) {
+      panel.style.left = `${pos.left}px`;
+      panel.style.top = `${pos.top}px`;
+      panel.style.right = "auto";
+      panel.style.bottom = "auto";
+    }
+  };
+
+  const savedRaw = localStorage.getItem(SETTINGS_POS_KEY);
+  if (savedRaw) {
+    try { applyPos(JSON.parse(savedRaw)); } catch {}
+  } else {
+    applyPos({ corner: "bl" });
+  }
+
+  let drag = null;
+  const onMove = (e) => {
+    if (!drag) return;
+    const left = drag.startLeft + (e.clientX - drag.startX);
+    const top = drag.startTop + (e.clientY - drag.startY);
+    applyPos({ left, top });
+  };
+  const endDrag = () => {
+    if (!drag) return;
+    localStorage.setItem(SETTINGS_POS_KEY, JSON.stringify({ left: drag.lastLeft ?? panel.offsetLeft, top: drag.lastTop ?? panel.offsetTop }));
+    drag = null;
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", endDrag);
+    window.removeEventListener("pointercancel", endDrag);
+  };
+  header.addEventListener("pointerdown", (e) => {
+    drag = {
+      startX: e.clientX,
+      startY: e.clientY,
+      startLeft: panel.offsetLeft,
+      startTop: panel.offsetTop,
+    };
+    window.addEventListener("pointermove", (ev) => {
+      if (!drag) return;
+      drag.lastLeft = drag.startLeft + (ev.clientX - drag.startX);
+      drag.lastTop = drag.startTop + (ev.clientY - drag.startY);
+      applyPos({ left: drag.lastLeft, top: drag.lastTop });
+    });
+    window.addEventListener("pointerup", endDrag);
+    window.addEventListener("pointercancel", endDrag);
+  });
+
+  document.querySelectorAll(".corner-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const corner = btn.dataset.corner;
+      applyPos({ corner });
+      localStorage.setItem(SETTINGS_POS_KEY, JSON.stringify({ corner }));
+    });
+  });
+
+  const collapseBtn = $("settingsCollapse");
+  const body = $("settingsBody");
+  const restoreCollapsed = localStorage.getItem(SETTINGS_COLLAPSE_KEY) === "1";
+  if (restoreCollapsed) panel.classList.add("collapsed");
+  collapseBtn?.addEventListener("click", () => {
+    const now = panel.classList.toggle("collapsed");
+    localStorage.setItem(SETTINGS_COLLAPSE_KEY, now ? "1" : "0");
+  });
 }
 
 function initPrimarySplitter() {
@@ -636,94 +746,152 @@ function densityMatrix(state) {
 }
 
 function computeBlochTraces(stepIdx) {
-  const q0Init = normalizeState(getInitialState(0));
-  const q1Init = normalizeState(getInitialState(1));
-  let rho4 = buildProductRho2(q0Init, q1Init);
+  const pairIndices = findPrimaryPair(stepIdx);
+  const [pairA, pairB] = pairIndices;
+  const stateList = Array.from({ length: qubitCount }, (_, q) => normalizeState(getInitialState(q)));
+  let rho4 = buildProductRho2(stateList[pairA], stateList[pairB]);
 
   const traces = Array.from({ length: qubitCount }, () => []);
   const measuredLatest = Array.from({ length: qubitCount }, () => null);
   const measuredEvents = [];
-  const pushVecs = () => {
-    const rhoA = partialTraceQubit(rho4, 1);
-    const rhoB = partialTraceQubit(rho4, 0);
-    const vA = blochFromRho(rhoA);
-    const vB = blochFromRho(rhoB);
-    traces[0]?.push(vA);
-    traces[1]?.push(vB);
+
+  const pushAllVecs = () => {
+    for (let q = 0; q < qubitCount; q++) {
+      if (q === pairA || q === pairB) {
+        const rhoPart = partialTraceQubit(rho4, q === pairA ? 1 : 0);
+        const v = blochFromRho(rhoPart);
+        stateList[q] = stateFromRho(rhoPart);
+        traces[q]?.push(v);
+      } else {
+        traces[q]?.push(getBlochVectorFromState(stateList[q]));
+      }
+    }
   };
-  pushVecs();
+
+  pushAllVecs();
 
   if (stepIdx >= 0) {
     for (let s = 0; s <= stepIdx; s++) {
-      for (let q = 0; q < Math.min(qubitCount, 2); q++) {
+      for (let q = 0; q < qubitCount; q++) {
         const g = singleQ[q]?.[s];
         if (g && GATES[g]) {
           if (g === "M") {
-            // Measure qubit q in Z basis; sample once and reuse for this circuit state.
             const storedOdds = measurementOdds?.[s]?.[q];
-            const probs = storedOdds || measureProbabilities(rho4, q);
-            let outcome = measurementOutcomes?.[s]?.[q];
-            if (outcome == null) {
-              const total = Math.max(0, probs.p0 + probs.p1) || 1;
-              const r = Math.random();
-              outcome = (r < probs.p0 / total) ? 0 : 1;
-              if (measurementOutcomes[s]) measurementOutcomes[s][q] = outcome;
+            if (q === pairA || q === pairB) {
+              const localIdx = q === pairA ? 0 : 1;
+              const probs = storedOdds || measureProbabilities(rho4, localIdx);
+              let outcome = measurementOutcomes?.[s]?.[q];
+              if (outcome == null) {
+                const total = Math.max(0, probs.p0 + probs.p1) || 1;
+                const r = Math.random();
+                outcome = (r < probs.p0 / total) ? 0 : 1;
+                if (measurementOutcomes[s]) measurementOutcomes[s][q] = outcome;
+              }
+              if (!storedOdds && measurementOdds[s]) {
+                measurementOdds[s][q] = { p0: probs.p0, p1: probs.p1 };
+              }
+              const { rho: collapsed } = collapseOnOutcome(rho4, localIdx, outcome);
+              rho4 = collapsed;
+              measuredLatest[q] = outcome;
+              measuredEvents.push({ qubit: q, outcome, step: s, probs });
+              pushAllVecs();
+              continue;
+            } else {
+              const state = stateList[q];
+              const rho = densityFromState(state);
+              const probs = storedOdds || probsFromRho(rho);
+              let outcome = measurementOutcomes?.[s]?.[q];
+              if (outcome == null) {
+                const total = Math.max(0, probs.p0 + probs.p1) || 1;
+                const r = Math.random();
+                outcome = (r < probs.p0 / total) ? 0 : 1;
+                if (measurementOutcomes[s]) measurementOutcomes[s][q] = outcome;
+              }
+              if (!storedOdds && measurementOdds[s]) {
+                measurementOdds[s][q] = { p0: probs.p0, p1: probs.p1 };
+              }
+              stateList[q] = outcome === 0 ? normalizeState({ alpha: c(1, 0), beta: c(0, 0) }) : normalizeState({ alpha: c(0, 0), beta: c(1, 0) });
+              measuredLatest[q] = outcome;
+              measuredEvents.push({ qubit: q, outcome, step: s, probs });
+              pushAllVecs();
+              continue;
             }
-            if (!storedOdds && measurementOdds[s]) {
-              measurementOdds[s][q] = { p0: probs.p0, p1: probs.p1 };
-            }
-            const { rho: collapsed } = collapseOnOutcome(rho4, q, outcome);
-            rho4 = collapsed;
-            measuredLatest[q] = outcome;
-            measuredEvents.push({ qubit: q, outcome, step: s, probs });
-            pushVecs();
-            continue;
           }
 
-          const U = GATES[g].matrix;
-          const beforeRho = partialTraceQubit(rho4, q === 0 ? 1 : 0);
-          const beforeV = blochFromRho(beforeRho);
-          const U4 = singleOn4(U, q);
-          rho4 = apply4Unitary(rho4, U4);
-          const afterRho = partialTraceQubit(rho4, q === 0 ? 1 : 0);
-          const afterV = blochFromRho(afterRho);
-
-          const axis = new THREE.Vector3(GATES[g].axis.x, GATES[g].axis.y, GATES[g].axis.z).normalize();
-          const beforeVec = new THREE.Vector3(beforeV.x, beforeV.y, beforeV.z);
-          const steps = 36;
-          for (let i = 1; i <= steps; i++) {
-            const t = i / steps;
-            const theta = GATES[g].angle * t;
-            const vt = rotateVectorAroundAxis(beforeVec, axis, theta);
-            if (q === 0) traces[0]?.push({ x: vt.x, y: vt.y, z: vt.z });
-            if (q === 1) traces[1]?.push({ x: vt.x, y: vt.y, z: vt.z });
+          if (q === pairA || q === pairB) {
+            const U = GATES[g].matrix;
+            const beforeRho = partialTraceQubit(rho4, q === pairA ? 1 : 0);
+            const beforeV = blochFromRho(beforeRho);
+            const U4 = singleOn4(U, q === pairA ? 0 : 1);
+            rho4 = apply4Unitary(rho4, U4);
+            const axis = new THREE.Vector3(GATES[g].axis.x, GATES[g].axis.y, GATES[g].axis.z).normalize();
+            const beforeVec = new THREE.Vector3(beforeV.x, beforeV.y, beforeV.z);
+            const steps = 36;
+            for (let i = 1; i <= steps; i++) {
+              const t = i / steps;
+              const theta = GATES[g].angle * t;
+              const vt = rotateVectorAroundAxis(beforeVec, axis, theta);
+              if (q === 0) traces[0]?.push({ x: vt.x, y: vt.y, z: vt.z });
+              if (q === 1) traces[1]?.push({ x: vt.x, y: vt.y, z: vt.z });
+            }
+            const afterRho = partialTraceQubit(rho4, q === pairA ? 1 : 0);
+            const afterV = blochFromRho(afterRho);
+            stateList[q] = stateFromRho(afterRho);
+            traces[q]?.push(afterV);
+          } else {
+            const before = getBlochVectorFromState(stateList[q]);
+            const beforeVec = new THREE.Vector3(before.x, before.y, before.z);
+            stateList[q] = applyGateToState(stateList[q], g);
+            const after = getBlochVectorFromState(stateList[q]);
+            const afterVec = new THREE.Vector3(after.x, after.y, after.z);
+            const axis = new THREE.Vector3(GATES[g].axis.x, GATES[g].axis.y, GATES[g].axis.z).normalize();
+            const steps = 36;
+            for (let i = 1; i <= steps; i++) {
+              const t = i / steps;
+              const theta = GATES[g].angle * t;
+              const vt = rotateVectorAroundAxis(beforeVec, axis, theta);
+              traces[q]?.push({ x: vt.x, y: vt.y, z: vt.z });
+            }
+            traces[q]?.push({ x: afterVec.x, y: afterVec.y, z: afterVec.z });
           }
         }
       }
+
       for (const op of multiQ[s]) {
-        if (op.type === "CX" && op.control < 2 && op.target < 2) {
-          rho4 = apply4Unitary(rho4, CX4);
-          pushVecs();
+        if (op.type !== "CX") continue;
+        const control = op.control;
+        const target = op.target;
+        if ((control === pairA && target === pairB) || (control === pairB && target === pairA)) {
+          const cxMat = control === pairA ? CX4 : CX_REVERSED;
+          rho4 = apply4Unitary(rho4, cxMat);
+        } else {
+          const controlState = control === pairA || control === pairB
+            ? stateFromRho(partialTraceQubit(rho4, control === pairA ? 1 : 0))
+            : cloneState(stateList[control]);
+          const targetState = target === pairA || target === pairB
+            ? stateFromRho(partialTraceQubit(rho4, target === pairA ? 1 : 0))
+            : cloneState(stateList[target]);
+
+          const updatedTarget = applyCXApprox(controlState, targetState);
+          if (target < qubitCount) stateList[target] = updatedTarget;
+
+          if (control === pairA || control === pairB || target === pairA || target === pairB) {
+            const pa = stateToPure(stateList[pairA]);
+            const pb = stateToPure(stateList[pairB]);
+            rho4 = buildProductRho2(pa, pb);
+          }
         }
+        pushAllVecs();
       }
     }
   }
 
   const states = Array.from({ length: qubitCount }, (_, idx) => {
-    if (idx === 0) {
-      const rhoA = partialTraceQubit(rho4, 1);
-      const pure = rhoToPureState(rhoA);
-      return pure || { rho: rhoA };
-    }
-    if (idx === 1) {
-      const rhoB = partialTraceQubit(rho4, 0);
-      const pure = rhoToPureState(rhoB);
-      return pure || { rho: rhoB };
-    }
-    return normalizeState(getInitialState(idx));
+    if (idx === pairA || idx === pairB) return stateList[idx];
+    return stateList[idx];
   });
 
-  return { states, traces, rho2: rho4, measuredEvents, measuredLatest };
+  return { states, traces, rho2: rho4, measuredEvents, measuredLatest, pairIndices };
 }
 
 function updateGateHoverMath(gateName) {
@@ -886,8 +1054,10 @@ function rebuildToStep(stepIdx) {
   measurementOverrideRho = null;
 
   measuredVisualOutcomes = Array.from({ length: qubitCount }, () => null);
+  refreshMeasurementClasses();
 
-  const { states, traces, rho2, measuredEvents, measuredLatest } = computeBlochTraces(stepIdx);
+  const { states, traces, rho2, measuredEvents, measuredLatest, pairIndices } = computeBlochTraces(stepIdx);
+  entangledPairIndices = pairIndices;
   latestGlobalRho = rho2;
   const entangledNow = !!rho2 && isEntangledFromRho(rho2);
   const eventsThisStep = (measuredEvents || []).filter((ev) => ev.step === stepIdx);
@@ -900,7 +1070,7 @@ function rebuildToStep(stepIdx) {
     const state = states[q] ?? normalizeState(getInitialState(q));
     const trace = traces[q] ?? [];
     const hold = shouldAnimateMeasure && eventsThisStep.some((ev) => ev.qubit === q);
-    const hideArrow = hold || (entangledNow && measuredVisualOutcomes[q] == null && q < 2);
+    const hideArrow = hold || (entangledNow && measuredVisualOutcomes[q] == null && isPairMember(q));
     const hideTrace = hideArrow;
     w.setStateAndTrace(state, trace, { hideArrow, hideTrace });
     const rho = densityFromState(state);
@@ -1649,6 +1819,7 @@ function applyMeasurementVisual(q, outcome, { cue = false, snap = false } = {}) 
     measEl.classList.remove("on");
     measEl.classList.remove("pending");
     stateChipEl?.classList.remove("pending");
+    refreshMeasurementClasses();
     return;
   }
 
@@ -1673,6 +1844,8 @@ function applyMeasurementVisual(q, outcome, { cue = false, snap = false } = {}) 
     widget.setStateAndTrace(normalizeState(pure), [{ x: 0, y: 0, z: outcome === 0 ? 1 : -1 }]);
     updatePurityChip(purityEl, 1);
   }
+
+  refreshMeasurementClasses();
 }
 
 function revealHeldMeasurement(q, held, rho2) {
@@ -1705,6 +1878,14 @@ function playMeasurementAnimations(events, holdMap, rho2) {
 
   return seq.finally(() => {
     if (runId === measurementAnimRunId) document.body.classList.remove("coin-anim-visible");
+  });
+}
+
+function refreshMeasurementClasses() {
+  widgets.forEach((entry, idx) => {
+    const tile = entry?.tileEl;
+    if (!tile) return;
+    tile.classList.remove("measured-hit", "measured-miss", "measure-pulse");
   });
 }
 
@@ -1765,6 +1946,58 @@ function collapseOnOutcome(rho4, qubit, outcome) {
   return { rho: collapsed, prob, outcome };
 }
 
+function stateFromRho(rho) {
+  const pure = rhoToPureState(rho);
+  if (pure) return pure;
+  return {
+    rho: rho.map((row) => row.map((z) => ({ re: z.re, im: z.im }))),
+  };
+}
+
+function cloneState(state) {
+  if (!state) return null;
+  if (state.rho) {
+    return {
+      rho: state.rho.map((row) => row.map((z) => ({ re: z.re, im: z.im }))),
+    };
+  }
+  return {
+    alpha: c(state.alpha.re, state.alpha.im),
+    beta: c(state.beta.re, state.beta.im),
+  };
+}
+
+function stateToPure(state) {
+  if (!state) return normalizeState({ alpha: c(1, 0), beta: c(0, 0) });
+  if (state.rho) {
+    const pure = rhoToPureState(state.rho);
+    if (pure) return pure;
+    const { p0, p1 } = probsFromRho(state.rho);
+    return normalizeState({
+      alpha: c(Math.sqrt(Math.max(0, p0)), 0),
+      beta: c(Math.sqrt(Math.max(0, p1)), 0),
+    });
+  }
+  return normalizeState({
+    alpha: c(state.alpha.re, state.alpha.im),
+    beta: c(state.beta.re, state.beta.im),
+  });
+}
+
+function findPrimaryPair(stepIdx) {
+  const maxStep = Math.max(0, Math.min(stepCount - 1, stepIdx ?? stepCount - 1));
+  for (let s = 0; s <= maxStep; s++) {
+    for (const op of multiQ[s] || []) {
+      if (op.type === "CX" && op.control < qubitCount && op.target < qubitCount) {
+        return [op.control, op.target];
+      }
+    }
+  }
+  const fallbackA = 0;
+  const fallbackB = Math.min(1, Math.max(0, qubitCount - 1));
+  return [fallbackA, fallbackB];
+}
+
 function updateCorrelationsPanel() {
   const rho = getCurrentRho4();
   const panel = $("correlationsPanel");
@@ -1798,7 +2031,7 @@ function updateEntanglementIndicators(rho4) {
   document.body.classList.toggle("entangled", entangled);
   document.body.classList.toggle("corr-active", entangled);
   widgets.forEach(({ tileEl }, idx) => {
-    const ent = entangled && idx < 2 && measuredVisualOutcomes[idx] == null;
+    const ent = entangled && isPairMember(idx) && measuredVisualOutcomes[idx] == null;
     tileEl.classList.toggle("entangled", ent);
   });
 }
@@ -1858,7 +2091,7 @@ function updateGlobalStateBadges() {
       badge.classList.remove("entangled");
       return;
     }
-    if (entangled) {
+    if (entangled && isPairMember(idx)) {
       if (bell) {
         const bellLatex = bellToLatex(bell);
         badge.innerHTML = `\\(${bellLatex}\\)`;
@@ -1911,6 +2144,11 @@ function formatDiracLatex(rho, qIdx = 0, eps = 1e-6) {
   return `|\\psi_{${qIdx}}\\rangle = ${a}\\,|0\\rangle + ${b}\\,|1\\rangle`;
 }
 
+function isSuperposed(rho, eps = 1e-3) {
+  const { p0, p1 } = probsFromRho(rho);
+  return p0 > eps && p1 > eps && p0 < 1 - eps && p1 < 1 - eps;
+}
+
 function bellToLatex(label) {
   if (label.includes("Φ+") || label.includes("Phi") || label.includes("phi")) return "|\\Phi^{+}\\rangle";
   if (label.includes("Φ-") || label.includes("Phi-") || label.includes("phi-")) return "|\\Phi^{-}\\rangle";
@@ -1928,13 +2166,15 @@ function updateStateChip(q, state, globalRho4) {
   const rho = densityFromState(state);
   const diracLatex = formatDiracLatex(rho, q);
 
-  const entangled = !!globalRho4 && isEntangledFromRho(globalRho4);
-  const bell = globalRho4 ? describeBellState(globalRho4) : null;
+  const entangledPair = isPairMember(q);
+  const entangled = entangledPair && !!globalRho4 && isEntangledFromRho(globalRho4) && measuredVisualOutcomes[q] == null;
+  const bell = entangled ? describeBellState(globalRho4) : null;
+  const superposed = isSuperposed(rho);
 
   const suffix = entangled && bell ? `\\quad(${bellToLatex(bell)})` : "";
   chip.innerHTML = `\\(${diracLatex}${suffix}\\)`;
   chip.classList.add("on");
-  chip.classList.toggle("entangled", entangled);
+  chip.classList.toggle("entangled", superposed);
   typesetNode(chip);
 }
 
@@ -1966,39 +2206,36 @@ function closeInspectPopover() { $("inspectPopover")?.classList.remove("on"); }
 
 function computeBlochTracesFromRho(rho4) {
   const traces = Array.from({ length: qubitCount }, () => []);
+  const [pairA, pairB] = entangledPairIndices;
   const rhoA = partialTraceQubit(rho4, 1);
   const rhoB = partialTraceQubit(rho4, 0);
   const vA = blochFromRho(rhoA);
   const vB = blochFromRho(rhoB);
-  traces[0]?.push(vA);
-  traces[1]?.push(vB);
+  traces[pairA]?.push(vA);
+  traces[pairB]?.push(vB);
   const states = Array.from({ length: qubitCount }, (_, idx) => {
-    if (idx === 0) {
-      const pure = rhoToPureState(rhoA);
-      return pure || { rho: rhoA };
-    }
-    if (idx === 1) {
-      const pure = rhoToPureState(rhoB);
-      return pure || { rho: rhoB };
-    }
-    return normalizeState(getInitialState(idx));
+    if (idx === pairA) return stateFromRho(rhoA);
+    if (idx === pairB) return stateFromRho(rhoB);
+    return stateFromRho(densityFromState(getInitialState(idx)));
   });
   widgets.forEach((w, i) => {
-    const rho = i === 0 ? rhoA : (i === 1 ? rhoB : null);
+    const rho = i === pairA ? rhoA : (i === pairB ? rhoB : null);
     if (rho) updatePurityChip(w?.purityEl, trace2MatSquared(rho));
   });
   return { states, traces };
 }
 
 function measureQubit(idx) {
+  if (!isPairMember(idx)) return;
   const rho = getCurrentRho4();
   if (!rho) return;
-  const probs = measureProbabilities(rho, idx);
+  const localIdx = idx === entangledPairIndices[0] ? 0 : 1;
+  const probs = measureProbabilities(rho, localIdx);
   const total = Math.max(0, probs.p0 + probs.p1) || 1;
   const r = Math.random();
   const outcome = r < probs.p0 / total ? 0 : 1;
 
-  const { rho: collapsed } = collapseOnOutcome(rho, idx, outcome);
+  const { rho: collapsed } = collapseOnOutcome(rho, localIdx, outcome);
 
   measurementOverrideRho = collapsed;
   latestGlobalRho = collapsed;
@@ -2171,6 +2408,8 @@ window.addEventListener("load", () => {
   rebuildToStep(activeStep);
 
   initPrimarySplitter();
+  initBlochTileSizer();
+  initSettingsPanelDrag();
 
   // Gate library: always visible + render once
   renderGatePalette();
@@ -2318,6 +2557,7 @@ window.addEventListener("load", () => {
       hideInitStateMenu();
     }
 
+    const inspectPopoverEl = $("inspectPopover");
     if (!inspectPopoverEl?.contains(e.target) && e.target !== $("inspectRho")) {
       closeInspectPopover();
     }

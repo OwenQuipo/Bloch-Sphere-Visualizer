@@ -59,6 +59,7 @@ class CoinFlipAnimator {
 
   init() {
     if (!this.mountEl || this.scene) return;
+    this._clearHighlights();
     const width = this.mountEl.clientWidth || 220;
     const height = this.mountEl.clientHeight || 220;
     const aspect = width / height;
@@ -77,10 +78,16 @@ class CoinFlipAnimator {
     this.camera.position.set(0, 10, 0);
     this.camera.lookAt(0, 0, 0);
 
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    this.renderer.setSize(width, height);
-    this.renderer.setPixelRatio(window.devicePixelRatio);
-    this.mountEl.appendChild(this.renderer.domElement);
+    try {
+      this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+      this.renderer.setSize(width, height);
+      this.renderer.setPixelRatio(window.devicePixelRatio);
+      this.mountEl.appendChild(this.renderer.domElement);
+      this.renderer.domElement.addEventListener("webglcontextlost", (e) => this._handleContextLost(e), false);
+    } catch (err) {
+      console.error("Coin flip renderer init failed:", err);
+      return;
+    }
 
     this.scene.add(new THREE.AmbientLight(0xffffff, 0.55));
     const dir = new THREE.DirectionalLight(0xffffff, 0.9);
@@ -137,6 +144,24 @@ class CoinFlipAnimator {
     this._tick();
   }
 
+  _handleContextLost(e) {
+    if (e?.preventDefault) e.preventDefault();
+    this._resetScene();
+    requestAnimationFrame(() => this.init());
+  }
+
+  _resetScene() {
+    if (this.renderer?.domElement?.parentNode) {
+      this.renderer.domElement.parentNode.removeChild(this.renderer.domElement);
+    }
+    this.renderer?.dispose?.();
+    this.renderer = null;
+    this.scene = null;
+    this.camera = null;
+    this.coinGroup = null;
+    this.shadowMesh = null;
+  }
+
   resize() {
     if (!this.renderer || !this.camera) return;
     const width = this.mountEl.clientWidth || 220;
@@ -153,6 +178,7 @@ class CoinFlipAnimator {
 
   setStatus(text) {
     if (!this.statusEl) return;
+    this._clearHighlights();
     const hasKet = typeof text === "string" && text.includes("|") && text.includes("⟩");
     if (hasKet) {
       const latex = text.replace(/\|/g, "\\(|").replace(/⟩/g, "\\rangle\\)");
@@ -165,6 +191,7 @@ class CoinFlipAnimator {
 
   setOdds(probs) {
     if (!this.oddsEl) return;
+    this.oddsEl.classList.remove("coin-miss");
     if (!probs) {
       this.oddsEl.textContent = "Odds: –";
       return;
@@ -172,12 +199,12 @@ class CoinFlipAnimator {
     const total = Math.max(0, probs.p0 + probs.p1) || 1;
     const p0 = Math.round((Math.max(0, probs.p0) / total) * 100);
     const p1 = Math.max(0, 100 - p0);
-    this.oddsEl.innerHTML = `Odds: \\(|0\\rangle\\) ${p0}\\% \\cdot \\(|1\\rangle\\) ${p1}\\%`;
-    typesetNode(this.oddsEl);
+    this.oddsEl.textContent = `Odds: |0⟩ ${p0}% | |1⟩ ${p1}%`;
   }
 
   play(outcome, { label, probs } = {}) {
     if (!this.scene) this.init();
+    this._clearHighlights();
     this.targetIsOne = outcome === 1 || outcome === "tails" || outcome === "|1⟩";
     this.playStart = performance.now();
     this.playDuration = 1400 + Math.random() * 220;
@@ -191,6 +218,7 @@ class CoinFlipAnimator {
   }
 
   _tick() {
+    if (this.fallback) return;
     this._raf = requestAnimationFrame(() => this._tick());
     this._update(performance.now());
     if (this.renderer && this.scene && this.camera) {
@@ -227,6 +255,7 @@ class CoinFlipAnimator {
       this.coinGroup.rotation.set(this.targetIsOne ? Math.PI : 0, 0, 0);
       this.coinGroup.scale.set(1, 1, 1);
       this.setStatus(this.targetIsOne ? "|1⟩" : "|0⟩");
+      this._applyOutcomeHighlight(this.targetIsOne ? 1 : 0);
       this.setOdds(null);
       const r = this._resolve;
       if (r) {
@@ -236,6 +265,24 @@ class CoinFlipAnimator {
           if (cb) cb();
         }, this.resultHoldMs);
       }
+    }
+  }
+
+  _clearHighlights() {
+    if (this.statusEl) {
+      this.statusEl.classList.remove("coin-hit", "coin-pulse");
+    }
+    if (this.oddsEl) {
+      this.oddsEl.classList.remove("coin-miss");
+    }
+  }
+
+  _applyOutcomeHighlight(outcome) {
+    if (this.statusEl) {
+      this.statusEl.classList.add("coin-hit", "coin-pulse");
+    }
+    if (this.oddsEl) {
+      this.oddsEl.classList.add("coin-miss");
     }
   }
 }

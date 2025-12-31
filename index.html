@@ -118,24 +118,42 @@
         </div>
 
         <!-- micro overlay (bottom-left) -->
-        <div id="blochOverlay" class="micro-overlay" aria-label="Bloch overlay">
-          <label class="micro-toggle" title="Toggle trajectory trail">
-            <input id="toggleTrajectory" type="checkbox" checked />
-            <span class="micro-pill">Trail</span>
-          </label>
+        <div id="blochOverlay" class="micro-overlay settings-panel" aria-label="Settings overlay">
+          <div id="settingsHeader" class="settings-header" title="Drag to move">
+            <span class="settings-title">Settings</span>
+            <div class="settings-actions">
+              <button id="settingsCollapse" class="micro-icon" title="Collapse/expand">▾</button>
+              <button data-corner="tl" class="micro-icon corner-btn" title="Snap top-left">↖</button>
+              <button data-corner="tr" class="micro-icon corner-btn" title="Snap top-right">↗</button>
+              <button data-corner="bl" class="micro-icon corner-btn" title="Snap bottom-left">↙</button>
+              <button data-corner="br" class="micro-icon corner-btn" title="Snap bottom-right">↘</button>
+            </div>
+          </div>
+          <div id="settingsBody" class="settings-body">
+            <label class="micro-toggle" title="Toggle trajectory trail">
+              <input id="toggleTrajectory" type="checkbox" checked />
+              <span class="micro-pill">Trail</span>
+            </label>
 
-          <label class="micro-toggle" title="Toggle measurement flip animation">
-            <input id="toggleMeasurementAnim" type="checkbox" checked />
-            <span class="micro-pill">Flip anim</span>
-          </label>
+            <label class="micro-toggle" title="Toggle measurement flip animation">
+              <input id="toggleMeasurementAnim" type="checkbox" checked />
+              <span class="micro-pill">Flip anim</span>
+            </label>
 
-          <button id="openProbPopover" class="micro-btn" title="Probabilities">
-            Probs
-          </button>
+            <label class="micro-slider" title="Adjust Bloch tile size">
+              <span class="micro-pill">Tile size</span>
+              <input id="blochTileSize" type="range" min="160" max="520" step="10" value="320" />
+              <span id="blochTileSizeVal" class="micro-pill size-val">320px</span>
+            </label>
 
-          <button id="openBackendDrawer" class="micro-btn" title="Backend math">
-            Math
-          </button>
+            <button id="openProbPopover" class="micro-btn" title="Probabilities">
+              Probs
+            </button>
+
+            <button id="openBackendDrawer" class="micro-btn" title="Backend math">
+              Math
+            </button>
+          </div>
         </div>
 
         <!-- Prob popover (anchored near overlay) -->

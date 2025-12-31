@@ -338,6 +338,12 @@ const CX4 = [
   [c(0,0), c(0,0), c(0,0), c(1,0)],
   [c(0,0), c(0,0), c(1,0), c(0,0)],
 ];
+const SWAP4 = [
+  [c(1,0), c(0,0), c(0,0), c(0,0)],
+  [c(0,0), c(0,0), c(1,0), c(0,0)],
+  [c(0,0), c(1,0), c(0,0), c(0,0)],
+  [c(0,0), c(0,0), c(0,0), c(1,0)],
+];
 
 function partialTraceQubit(rho4, tracedQubit) {
   // returns 2x2
@@ -428,6 +434,7 @@ export {
   PAULI_Z,
   ID2,
   CX4,
+  SWAP4,
   addRho,
   approx,
   apply4Unitary,
@@ -459,6 +466,7 @@ export {
   rhoToPureState,
   scaleRho,
   tensor2,
+  singleOn4,
   toFraction,
   trace2MatSquared,
   expectationPauliPair,

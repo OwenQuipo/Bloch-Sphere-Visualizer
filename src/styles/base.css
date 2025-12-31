@@ -29,6 +29,7 @@
 
   /* gate library fixed width to avoid messing up drag coords */
   --gateLibW: 360px;
+  --blochTileMin: 320px;
 }
 
 html, body{

@@ -19,7 +19,7 @@
 body.has-selection #circuitToolstrip{ opacity: 1; pointer-events: auto; }
 
 .micro-overlay{
-  position: absolute;
+  position: fixed;
   left: 12px;
   bottom: 12px;
   display: inline-flex;
@@ -33,6 +33,49 @@ body.has-selection #circuitToolstrip{ opacity: 1; pointer-events: auto; }
 }
 #blochPane:hover .micro-overlay{ opacity: 0.90; }
 body.is-playing #blochOverlay{ opacity: 0.25; }
+.settings-panel{
+  flex-direction: column;
+  gap: 6px;
+  z-index: 9100;
+}
+.settings-header{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: move;
+  user-select: none;
+}
+.settings-title{
+  font-size: 0.78rem;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+.settings-actions{
+  display: inline-flex;
+  gap: 4px;
+}
+.corner-btn{
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  border: 0;
+  background: rgba(245,245,245,0.06);
+  color: var(--text);
+  cursor: pointer;
+}
+.corner-btn:hover{ background: rgba(245,245,245,0.12); }
+.settings-body{
+  display: inline-flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.settings-panel.collapsed .settings-body{ display: none; }
+.settings-panel.corner-tl{ top: 12px; left: 12px; right: auto; bottom: auto; }
+.settings-panel.corner-tr{ top: 12px; right: 12px; left: auto; bottom: auto; }
+.settings-panel.corner-bl{ bottom: 12px; left: 12px; right: auto; top: auto; }
+.settings-panel.corner-br{ bottom: 12px; right: 12px; left: auto; top: auto; }
 
 .micro-btn{
   height: 28px;
@@ -64,6 +107,19 @@ body.is-playing #blochOverlay{ opacity: 0.25; }
 }
 .micro-toggle:hover .micro-pill{
   box-shadow: 0 0 0 1px var(--glow), 0 0 12px var(--glow);
+}
+.micro-slider{
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.micro-slider input[type=range]{
+  width: 110px;
+  accent-color: rgba(180,190,205,0.85);
+}
+.micro-slider .size-val{
+  min-width: 64px;
+  justify-content: center;
 }
 
 .coin-overlay{
@@ -101,10 +157,21 @@ body.coin-anim-visible .coin-overlay{
   font-weight: 700;
   font-size: 0.9rem;
 }
+.coin-outcome.coin-hit{
+  color: #6effb4;
+  text-shadow: 0 0 12px rgba(110,255,180,0.65);
+}
+.coin-outcome.coin-pulse{
+  animation: coinPulse 1.2s ease-in-out 2;
+}
 .coin-odds{
   margin: 2px 0 8px 0;
   font-size: 0.78rem;
   color: var(--muted);
+}
+.coin-odds.coin-miss{
+  color: #ff9a8a;
+  transform: scale(0.96);
 }
 .coin-mount{
   width: 100%;
@@ -423,4 +490,10 @@ body.gate-lib-collapsed #gateLibToggle .ico{
 #gateLibToggle .ico{
   display: inline-block;
   transition: transform 0.12s ease;
+}
+
+@keyframes coinPulse{
+  0%{ text-shadow: 0 0 0 rgba(110,255,180,0.0); transform: scale(1); }
+  50%{ text-shadow: 0 0 18px rgba(110,255,180,0.8); transform: scale(1.06); }
+  100%{ text-shadow: 0 0 0 rgba(110,255,180,0.0); transform: scale(1); }
 }
