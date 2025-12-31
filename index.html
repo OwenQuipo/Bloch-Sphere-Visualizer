@@ -124,6 +124,11 @@
             <span class="micro-pill">Trail</span>
           </label>
 
+          <label class="micro-toggle" title="Toggle measurement flip animation">
+            <input id="toggleMeasurementAnim" type="checkbox" checked />
+            <span class="micro-pill">Flip anim</span>
+          </label>
+
           <button id="openProbPopover" class="micro-btn" title="Probabilities">
             Probs
           </button>
@@ -137,6 +142,17 @@
         <div id="probPopover" class="popover" aria-label="Probabilities popover">
           <div id="probHistogram" class="mini-histogram" aria-label="Probability histogram"></div>
           <div id="probNote" class="popover-note">Probabilities reflect measurement of the full register.</div>
+        </div>
+
+        <div id="measurementAnimOverlay" class="coin-overlay" aria-label="Measurement animation">
+          <div class="coin-panel">
+            <div class="coin-panel-head">
+              <div class="coin-panel-title">Measurement flip</div>
+              <div id="coinOutcomeLabel" class="coin-outcome">Ready</div>
+            </div>
+            <div id="coinOdds" class="coin-odds">Odds: –</div>
+            <div id="coinMount" class="coin-mount" aria-hidden="true"></div>
+          </div>
         </div>
       </section>
 

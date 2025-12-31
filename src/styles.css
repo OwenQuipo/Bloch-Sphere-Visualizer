@@ -234,9 +234,6 @@ body.split-dragging .splitter::before{ opacity: 0.60; }
 .bloch-tile.measured .tile-canvas{
   box-shadow: inset 0 0 0 1px rgba(120,210,255,0.35), 0 0 0 1px rgba(120,210,255,0.2);
 }
-.bloch-tile.measure-cue .tile-canvas{
-  box-shadow: 0 0 0 2px rgba(120,210,255,0.6), 0 0 20px rgba(120,210,255,0.4);
-}
 .tile-canvas{
   border-radius: 12px;
   background: rgba(0,0,0,0.22);
@@ -342,6 +339,12 @@ body.split-dragging .splitter::before{ opacity: 0.60; }
   display: none;
 }
 .measurement-badge.on{ display: inline-flex; }
+.measurement-badge.pending{
+  color: rgba(255, 210, 140, 0.96);
+  border-style: dashed;
+  background: rgba(255, 210, 140, 0.10);
+  border-color: rgba(255, 210, 140, 0.4);
+}
 
 #entanglementBadge{
   position: absolute;
@@ -498,6 +501,11 @@ body.corr-active #correlationsPanel{
   background: rgba(255,150,120,0.08);
   color: rgba(255,200,180,0.96);
   border: 1px solid rgba(255,150,120,0.35);
+}
+.state-chip.pending{
+  background: rgba(255, 210, 140, 0.10);
+  color: rgba(255, 230, 180, 0.92);
+  border: 1px dashed rgba(255, 210, 140, 0.35);
 }
 
 #circuit-canvas{ position: relative; }
@@ -735,6 +743,55 @@ body.is-playing #blochOverlay{ opacity: 0.25; }
 }
 .micro-toggle:hover .micro-pill{
   box-shadow: 0 0 0 1px var(--glow), 0 0 12px var(--glow);
+}
+
+.coin-overlay{
+  position: fixed;
+  right: 18px;
+  bottom: 188px;
+  width: 240px;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.16s ease, transform 0.16s ease;
+  z-index: 4200;
+}
+body.coin-anim-visible .coin-overlay{
+  opacity: 1;
+  transform: translateY(0);
+}
+.coin-panel{
+  padding: 10px;
+  border-radius: 12px;
+  background: rgba(22,24,28,0.92);
+  box-shadow: 0 14px 32px rgba(0,0,0,0.42), 0 0 0 1px rgba(245,245,245,0.10);
+}
+.coin-panel-head{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+.coin-panel-title{ letter-spacing: 0.05em; text-transform: uppercase; }
+.coin-outcome{
+  color: var(--text);
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+.coin-odds{
+  margin: 2px 0 8px 0;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.coin-mount{
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 12px;
+  background: rgba(245,245,245,0.04);
+  overflow: hidden;
+  border: 1px solid rgba(245,245,245,0.06);
 }
 
 /* =========================
@@ -1051,6 +1108,24 @@ body.menu-open #overlayBackdrop{
 /* =========================
    Responsive
    ========================= */
+#hoverTooltip{
+  position: fixed;
+  transform: translate(-50%, -100%);
+  background: rgba(22,24,28,0.94);
+  color: var(--text);
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 0.78rem;
+  box-shadow: 0 10px 28px rgba(0,0,0,0.32), 0 0 0 1px rgba(245,245,245,0.08);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease, transform 0.12s ease;
+  z-index: 9000;
+}
+#hoverTooltip.on{
+  opacity: 1;
+  transform: translate(-50%, -120%);
+}
 @media (max-width: 980px){
   #main{
     grid-template-columns: 1fr;

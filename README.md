@@ -1,14 +1,22 @@
-# Bloch-Sphere-Visualizer
-HTML web tool designed to help fellow students understand phase changes on the bloch sphere. 
+# Bloch Sphere Visualizer
 
-### further analysis
+An interactive Three.js + MathJax web app for building simple quantum circuits, animating gates on the Bloch sphere, and previewing measurement outcomes (including a top-down coin flip animation).
 
-- It’s unclear to me whether visualization genuinely aids understanding beyond pedagogical intuition.
-- I’m not confident where this breaks down compared to density-matrix–based approaches.
+## Features
+- Drag-and-drop circuit composer with H, X, Y, Z, S, T, CX, and measurement gates.
+- Per-qubit Bloch spheres with animated gate arcs, trail toggle, purity, and entanglement indicators.
+- Measurement visuals: snap-to-axis collapse, optional coin-flip animation with odds and delayed reveal.
+- Probability, backend math, and density-matrix inspection drawers, all rendered with MathJax.
+- Initial state picker per wire (|0⟩, |1⟩, |+⟩, |−⟩, |i⟩, |−i⟩).
 
-## Development
-
+## Quick Start
 - Install deps: `npm install`
-- Start dev server: `npm run dev`
-- Build for production: `npm run build`
-- Preview the build: `npm run preview`
+- Dev server: `npm run dev`
+- Production build: `npm run build`
+- Preview build: `npm run preview`
+
+## Usage Tips
+- Click the ket label on a wire to set its initial state.
+- Drag gates from the library onto the grid; right-click a placed gate to remove it.
+- Use step controls or spacebar to play/pause timeline progression.
+- Hover controls to see tooltips describing their actions.

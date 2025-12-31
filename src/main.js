@@ -603,7 +603,7 @@ class BlochSphereWidget {
 
     if (this.traceLine?.material) {
       this.traceLine.visible = !this.forceHideTrace;
-      this.traceLine.material.opacity = this.forceHideTrace ? 0 : this.traceLine.material.opacity;
+      this.traceLine.material.opacity = this.forceHideTrace ? 0 : 1;
     }
   }
 
@@ -638,16 +638,298 @@ class BlochSphereWidget {
   }
 }
 
+// -------------------- Measurement coin animation (top-down) --------------------
+function makeCoinFaceTexture(label) {
+  const size = 256;
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  const center = size / 2;
+  const radius = size * 0.42;
+
+  const grad = ctx.createRadialGradient(center - radius * 0.2, center - radius * 0.2, radius * 0.2, center, center, radius);
+  grad.addColorStop(0, "#fefefe");
+  grad.addColorStop(0.5, "#e4e6ec");
+  grad.addColorStop(1, "#c9ceda");
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(center, center, radius, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = "rgba(40,44,54,0.35)";
+  ctx.lineWidth = size * 0.02;
+  ctx.beginPath();
+  ctx.arc(center, center, radius * 0.88, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.fillStyle = "#0b0c0e";
+  ctx.font = `${Math.floor(size * 0.28)}px "Times New Roman", Georgia, serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, center, center);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.anisotropy = 4;
+  return tex;
+}
+
+class CoinFlipAnimator {
+  constructor({ mountEl, statusEl, oddsEl }) {
+    this.mountEl = mountEl;
+    this.statusEl = statusEl;
+    this.oddsEl = oddsEl;
+    this.scene = null;
+    this.camera = null;
+    this.renderer = null;
+    this.coinGroup = null;
+    this.shadowMesh = null;
+    this._raf = null;
+
+    this.playing = false;
+    this.playStart = 0;
+    this.playDuration = 1400;
+    this.targetIsOne = false;
+    this._resolve = null;
+    this.resultHoldMs = 750;
+  }
+
+  init() {
+    if (!this.mountEl || this.scene) return;
+    const width = this.mountEl.clientWidth || 220;
+    const height = this.mountEl.clientHeight || 220;
+    const aspect = width / height;
+    const viewSize = 1.7;
+
+    this.scene = new THREE.Scene();
+
+    this.camera = new THREE.OrthographicCamera(
+      -viewSize * aspect,
+      viewSize * aspect,
+      viewSize,
+      -viewSize,
+      0.1,
+      30
+    );
+    this.camera.position.set(0, 10, 0);
+    this.camera.lookAt(0, 0, 0);
+
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    this.renderer.setSize(width, height);
+    this.renderer.setPixelRatio(window.devicePixelRatio);
+    this.mountEl.appendChild(this.renderer.domElement);
+
+    this.scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+    const dir = new THREE.DirectionalLight(0xffffff, 0.9);
+    dir.position.set(1.6, 2.4, 1.8);
+    this.scene.add(dir);
+
+    const table = new THREE.Mesh(
+      new THREE.PlaneGeometry(6, 6),
+      new THREE.MeshStandardMaterial({ color: 0x0d0f13, roughness: 0.94, metalness: 0.04 })
+    );
+    table.rotation.x = -Math.PI / 2;
+    this.scene.add(table);
+
+    this.coinGroup = new THREE.Group();
+    this.coinGroup.position.y = 0.08;
+    this.scene.add(this.coinGroup);
+
+    const radius = 0.6;
+    const thickness = 0.08;
+    const rim = new THREE.Mesh(
+      new THREE.CylinderGeometry(radius, radius, thickness, 64, 1, true),
+      new THREE.MeshStandardMaterial({ color: 0xd8dce6, metalness: 0.55, roughness: 0.34 })
+    );
+    this.coinGroup.add(rim);
+
+    const headsTex = makeCoinFaceTexture("|0⟩");
+    const tailsTex = makeCoinFaceTexture("|1⟩");
+    const faceGeom = new THREE.CircleGeometry(radius, 64);
+    const top = new THREE.Mesh(
+      faceGeom,
+      new THREE.MeshStandardMaterial({ map: headsTex, metalness: 0.32, roughness: 0.38 })
+    );
+    top.rotation.x = -Math.PI / 2;
+    top.position.y = thickness / 2 + 0.002;
+    this.coinGroup.add(top);
+
+    const bottom = new THREE.Mesh(
+      faceGeom,
+      new THREE.MeshStandardMaterial({ map: tailsTex, metalness: 0.32, roughness: 0.38 })
+    );
+    bottom.rotation.x = Math.PI / 2;
+    bottom.position.y = -thickness / 2 - 0.002;
+    this.coinGroup.add(bottom);
+
+    this.shadowMesh = new THREE.Mesh(
+      new THREE.CircleGeometry(radius * 1.5, 48),
+      new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.24, depthWrite: false })
+    );
+    this.shadowMesh.rotation.x = -Math.PI / 2;
+    this.shadowMesh.position.y = 0.001;
+    this.shadowMesh.scale.set(1.2, 1.2, 1.2);
+    this.scene.add(this.shadowMesh);
+
+    this._tick();
+  }
+
+  resize() {
+    if (!this.renderer || !this.camera) return;
+    const width = this.mountEl.clientWidth || 220;
+    const height = this.mountEl.clientHeight || 220;
+    const aspect = width / height;
+    const viewSize = 1.7;
+    this.camera.left = -viewSize * aspect;
+    this.camera.right = viewSize * aspect;
+    this.camera.top = viewSize;
+    this.camera.bottom = -viewSize;
+    this.camera.updateProjectionMatrix();
+    this.renderer.setSize(width, height);
+  }
+
+  setStatus(text) {
+    if (!this.statusEl) return;
+    const hasKet = typeof text === "string" && text.includes("|") && text.includes("⟩");
+    if (hasKet) {
+      const latex = text.replace(/\|/g, "\\(|").replace(/⟩/g, "\\rangle\\)");
+      this.statusEl.innerHTML = latex;
+      typesetNode(this.statusEl);
+    } else {
+      this.statusEl.textContent = text;
+    }
+  }
+
+  setOdds(probs) {
+    if (!this.oddsEl) return;
+    if (!probs) {
+      this.oddsEl.textContent = "Odds: –";
+      return;
+    }
+    const total = Math.max(0, probs.p0 + probs.p1) || 1;
+    const p0 = Math.round((Math.max(0, probs.p0) / total) * 100);
+    const p1 = Math.max(0, 100 - p0);
+    this.oddsEl.innerHTML = `Odds: \\(|0\\rangle\\) ${p0}\\% \\cdot \\(|1\\rangle\\) ${p1}\\%`;
+    typesetNode(this.oddsEl);
+  }
+
+  play(outcome, { label, probs } = {}) {
+    if (!this.scene) this.init();
+    this.targetIsOne = outcome === 1 || outcome === "tails" || outcome === "|1⟩";
+    this.playStart = performance.now();
+    this.playDuration = 1400 + Math.random() * 220;
+    this.playing = true;
+    this.setStatus(label ? `${label}: flipping…` : "Flipping…");
+    this.setOdds(probs);
+
+    return new Promise((resolve) => {
+      this._resolve = resolve;
+    });
+  }
+
+  _tick() {
+    this._raf = requestAnimationFrame(() => this._tick());
+    this._update(performance.now());
+    if (this.renderer && this.scene && this.camera) {
+      this.renderer.render(this.scene, this.camera);
+    }
+  }
+
+  _update(now) {
+    if (!this.playing) return;
+    const t = Math.min((now - this.playStart) / this.playDuration, 1);
+    const easeOut = t * t * (3 - 2 * t);
+
+    const arc = Math.sin(Math.PI * Math.min(1, t * 1.05)) * 1.35 + 0.05;
+    const flips = 3; // keep integer to make final face deterministic
+    const baseX = flips * Math.PI * 2 * easeOut + (this.targetIsOne ? Math.PI : 0);
+    const wobble = Math.sin(t * Math.PI * 6) * 0.28 * (1 - t);
+    const bank = Math.sin(t * Math.PI * 2.1) * 0.55 * (1 - t * 0.6);
+
+    this.coinGroup.position.y = arc;
+    this.coinGroup.rotation.set(baseX + bank, 0.22 * Math.sin(t * Math.PI * 1.6), wobble);
+
+    const landing = t > 0.86 ? (1 - t) * 6 : 0;
+    const squash = Math.max(0, landing * 0.08);
+    this.coinGroup.scale.set(1 + squash * 0.25, 1 - squash * 0.35, 1 + squash * 0.25);
+
+    const shadowScale = 1 + arc * 0.32;
+    const shadowFade = Math.max(0.12, 0.42 - arc * 0.16);
+    this.shadowMesh.scale.set(shadowScale * 1.3, shadowScale * 1.1, 1);
+    if (this.shadowMesh.material) this.shadowMesh.material.opacity = shadowFade;
+
+    if (t >= 1) {
+      this.playing = false;
+      this.coinGroup.position.y = 0.08;
+      this.coinGroup.rotation.set(this.targetIsOne ? Math.PI : 0, 0, 0);
+      this.coinGroup.scale.set(1, 1, 1);
+      this.setStatus(this.targetIsOne ? "|1⟩" : "|0⟩");
+      this.setOdds(null);
+      const r = this._resolve;
+      if (r) {
+        setTimeout(() => {
+          const cb = this._resolve;
+          this._resolve = null;
+          if (cb) cb();
+        }, this.resultHoldMs);
+      }
+    }
+  }
+}
+
 // -------------------- App state --------------------
 const MAX_QUBITS = 10;
 let qubitCount = 2;
 let selectedQubit = 0;
 let widgets = [];
 let initialStates = [];
+
+const INIT_STATE_MAP = {
+  "0": { alpha: c(1, 0), beta: c(0, 0), label: "|0\\rangle" },
+  "1": { alpha: c(0, 0), beta: c(1, 0), label: "|1\\rangle" },
+  "+": { alpha: c(SQ, 0), beta: c(SQ, 0), label: "|+\\rangle" },
+  "-": { alpha: c(SQ, 0), beta: c(-SQ, 0), label: "|-\\rangle" },
+  "i": { alpha: c(SQ, 0), beta: c(0, SQ), label: "|i\\rangle" },
+  "-i": { alpha: c(SQ, 0), beta: c(0, -SQ), label: "|-i\\rangle" },
+};
+const TIP_MAP = {
+  prevStep: "⬅️ Step back one gate",
+  nextStep: "➡️ Step forward one gate",
+  playPause: "⏯ Play / pause timeline",
+  resetState: "🔄 Reset visualization state",
+  addQubitTop: "➕ Add a qubit wire",
+  removeQubitTop: "➖ Remove a qubit wire",
+  addQubit: "➕ Add a qubit wire",
+  removeQubit: "➖ Remove a qubit wire",
+  openProbPopover: "📊 Show probabilities",
+  openBackendDrawer: "📐 Open math drawer",
+  toggleTrajectory: "🧭 Toggle Bloch trail",
+  toggleTrajectoryBtn: "🧭 Toggle Bloch trail",
+  toggleMeasurementAnim: "🪙 Toggle measurement flip animation",
+  gateLibToggle: "📚 Collapse / expand gate library",
+  moreMenuBtn: "⋮ More options",
+  menuClearCircuit: "🧹 Clear entire circuit",
+  menuExportJson: "💾 Export circuit JSON",
+  menuExportPng: "🖼 Export screenshot",
+  inspectRho: "⧉ Inspect density matrix",
+  measureQ0: "📏 Measure qubit 0",
+  measureQ1: "📏 Measure qubit 1",
+  copyLatex: "⧉ Copy LaTeX",
+  closeBackendDrawer: "✕ Close drawer",
+  openProbBtn: "📊 Show probabilities",
+  openMathBtn: "📐 Open math drawer",
+};
 let latestGlobalRho = null;
 let measurementOverrideRho = null;
 let measurementOutcomes = []; // [step][qubit] => 0/1/null
+let measurementOdds = []; // [step][qubit] => { p0, p1 } | null
 let measuredVisualOutcomes = []; // per-qubit latest measured result (manual or gate collapse)
+let measurementAnimEnabled = true;
+let coinAnimator = null;
+let measurementAnimRunId = 0;
+let tooltipEl = null;
+let tooltipTimer = null;
+let tooltipTarget = null;
+let tooltipRefreshQueued = false;
 const PURITY_EPS = 1e-6;
 
 // -------------------- Bloch layout --------------------
@@ -716,6 +998,7 @@ function rebuildBlochGrid() {
 
   refreshSelectedUI();
   requestAnimationFrame(resizeAllWidgets);
+  queueTooltipRefresh();
 }
 
 function resizeAllWidgets() {
@@ -825,6 +1108,7 @@ function initCircuitModel() {
   measurementOverrideRho = null;
   latestGlobalRho = null;
   measurementOutcomes = Array.from({ length: stepCount }, () => Array(qubitCount).fill(null));
+  measurementOdds = Array.from({ length: stepCount }, () => Array(qubitCount).fill(null));
   measuredVisualOutcomes = Array.from({ length: qubitCount }, () => null);
   updateSelectionState();
 }
@@ -866,6 +1150,19 @@ function ensureCircuitDimensions() {
       return row.slice(0, qubitCount);
     });
   }
+  if (!measurementOdds.length) {
+    measurementOdds = Array.from({ length: stepCount }, () => Array(qubitCount).fill(null));
+  } else {
+    if (measurementOdds.length !== stepCount) {
+      const old = measurementOdds;
+      measurementOdds = Array.from({ length: stepCount }, (_, s) => old[s] ? [...old[s]].slice(0, qubitCount) : Array(qubitCount).fill(null));
+    }
+    measurementOdds = measurementOdds.map((row) => {
+      if (row.length === qubitCount) return row;
+      if (row.length < qubitCount) return row.concat(Array(qubitCount - row.length).fill(null));
+      return row.slice(0, qubitCount);
+    });
+  }
   measuredVisualOutcomes = Array.from({ length: qubitCount }, (_, i) => measuredVisualOutcomes[i] ?? null);
 
   for (let s = 0; s < stepCount; s++) {
@@ -877,6 +1174,14 @@ function ensureCircuitDimensions() {
   if (pendingCX && (pendingCX.control >= qubitCount || pendingCX.step >= stepCount)) {
     pendingCX = null;
     updateSelectionState();
+  }
+}
+
+function clearMeasurementOutcomesFrom(stepIdx) {
+  if (!measurementOutcomes?.length) return;
+  for (let s = stepIdx; s < stepCount; s++) {
+    if (measurementOutcomes[s]) measurementOutcomes[s].fill(null);
+    if (measurementOdds[s]) measurementOdds[s].fill(null);
   }
 }
 
@@ -906,7 +1211,7 @@ function gateColorClass(g) {
 function clearAt(q, s) {
   singleQ[q][s] = null;
   multiQ[s] = multiQ[s].filter((op) => !(op.type === "CX" && (op.control === q || op.target === q)));
-  if (measurementOutcomes[s]) measurementOutcomes[s][q] = null;
+  clearMeasurementOutcomesFrom(s);
 }
 
 function placeSingleGate(q, s, gate) {
@@ -914,7 +1219,7 @@ function placeSingleGate(q, s, gate) {
   if (!GATES[gate]) return;
   singleQ[q][s] = gate;
   multiQ[s] = multiQ[s].filter((op) => !(op.type === "CX" && (op.control === q || op.target === q)));
-  if (measurementOutcomes[s]) measurementOutcomes[s][q] = null;
+  clearMeasurementOutcomesFrom(s);
 }
 
 function placeCX(q, s) {
@@ -937,6 +1242,7 @@ function placeCX(q, s) {
   });
 
   multiQ[s].push({ type: "CX", control, target });
+  clearMeasurementOutcomesFrom(s);
 }
 
 function placeCXDirect(step, control, target) {
@@ -952,6 +1258,7 @@ function placeCXDirect(step, control, target) {
   });
 
   multiQ[step].push({ type: "CX", control, target });
+  clearMeasurementOutcomesFrom(step);
 }
 
 function circuitIsEmpty() {
@@ -975,15 +1282,19 @@ function ensureInitialStates() {
 
 function setInitialStateForQubit(q, state) {
   if (q < 0 || q >= qubitCount) return;
-  const s = state === "1" ? "1" : "0";
+  const s = INIT_STATE_MAP[state] ? state : "0";
   initialStates[q] = s;
   renderCircuit();
   rebuildToStep(activeStep);
 }
 
 function getInitialState(q) {
-  const s = initialStates[q] === "1" ? "1" : "0";
-  return s === "1" ? { alpha: c(0, 0), beta: c(1, 0) } : { alpha: c(1, 0), beta: c(0, 0) };
+  const key = INIT_STATE_MAP[initialStates[q]] ? initialStates[q] : "0";
+  const base = INIT_STATE_MAP[key];
+  return {
+    alpha: c(base.alpha.re, base.alpha.im),
+    beta: c(base.beta.re, base.beta.im),
+  };
 }
 
 let initStateMenuEl = null;
@@ -995,8 +1306,12 @@ function ensureInitStateMenu() {
   menu.innerHTML = `
     <div class="init-title">Initial state</div>
     <div class="init-options">
-      <button type="button" data-state="0">|0⟩</button>
-      <button type="button" data-state="1">|1⟩</button>
+      <button type="button" data-state="0">\\(|0\\rangle\\)</button>
+      <button type="button" data-state="1">\\(|1\\rangle\\)</button>
+      <button type="button" data-state="+">\\(|+\\rangle\\)</button>
+      <button type="button" data-state="-">\\(|-\\rangle\\)</button>
+      <button type="button" data-state="i">\\(|i\\rangle\\)</button>
+      <button type="button" data-state="-i">\\(|-i\\rangle\\)</button>
     </div>
   `;
   menu.addEventListener("click", (e) => {
@@ -1007,6 +1322,7 @@ function ensureInitStateMenu() {
     hideInitStateMenu();
   });
   document.body.appendChild(menu);
+  typesetNode(menu);
   initStateMenuEl = menu;
   return menu;
 }
@@ -1024,6 +1340,90 @@ function hideInitStateMenu() {
   if (!initStateMenuEl) return;
   initStateMenuEl.classList.remove("on");
   initStateMenuEl.dataset.q = "";
+}
+
+// -------------------- Tooltips (global hover help) --------------------
+function ensureTooltipEl() {
+  if (tooltipEl) return tooltipEl;
+  const el = document.createElement("div");
+  el.id = "hoverTooltip";
+  document.body.appendChild(el);
+  tooltipEl = el;
+  return el;
+}
+
+function hideTooltip() {
+  if (tooltipTimer) {
+    clearTimeout(tooltipTimer);
+    tooltipTimer = null;
+  }
+  tooltipTarget = null;
+  if (tooltipEl) tooltipEl.classList.remove("on");
+}
+
+function showTooltip(target) {
+  if (!target) return;
+  const tip = target.dataset.tip || target.getAttribute("title") || target.getAttribute("aria-label") || target.textContent?.trim();
+  if (!tip) return;
+  const el = ensureTooltipEl();
+  el.innerHTML = `🔘 ${tip}`;
+  const rect = target.getBoundingClientRect();
+  const pad = 8;
+  const x = rect.left + rect.width / 2;
+  const y = rect.top - 10;
+  el.style.left = `${Math.max(pad, Math.min(window.innerWidth - pad, x))}px`;
+  el.style.top = `${Math.max(pad, y)}px`;
+  el.classList.add("on");
+}
+
+function attachTooltipHandlers(nodes) {
+  nodes.forEach((btn) => {
+    if (btn.dataset.tipBound) return;
+    btn.dataset.tipBound = "1";
+    btn.addEventListener("pointerenter", () => {
+      hideTooltip();
+      tooltipTarget = btn;
+      tooltipTimer = setTimeout(() => showTooltip(btn), 520);
+    });
+    const cancel = () => hideTooltip();
+    btn.addEventListener("pointerleave", cancel);
+    btn.addEventListener("pointerdown", cancel);
+    btn.addEventListener("keydown", cancel);
+  });
+}
+
+function initTooltips() {
+  const selectors = [
+    "button",
+    "input[type=button]",
+    "input[type=submit]",
+    "label.micro-toggle",
+    ".palette-gate",
+    ".cgate",
+    ".gate-box",
+    ".micro-btn",
+    ".icon-btn",
+    ".menu-item",
+    ".micro-icon",
+  ];
+  const nodes = Array.from(document.querySelectorAll(selectors.join(",")));
+  nodes.forEach((n) => {
+    if (!n.dataset.tip) {
+      const mapped = TIP_MAP[n.id];
+      const label = mapped || n.getAttribute("aria-label") || n.getAttribute("title") || n.textContent?.trim();
+      if (label) n.dataset.tip = label;
+    }
+  });
+  attachTooltipHandlers(nodes.filter((n) => !n.dataset.tipBound));
+}
+
+function queueTooltipRefresh() {
+  if (tooltipRefreshQueued) return;
+  tooltipRefreshQueued = true;
+  requestAnimationFrame(() => {
+    tooltipRefreshQueued = false;
+    initTooltips();
+  });
 }
 
 // -------------------- Gate matrix LaTeX (used for hover preview) --------------------
@@ -1237,15 +1637,23 @@ function computeBlochTraces(stepIdx) {
         const g = singleQ[q]?.[s];
         if (g && GATES[g]) {
           if (g === "M") {
-            // Measure qubit q in Z basis; always resample from current probabilities.
-            const probs = measureProbabilities(rho4, q);
-            const total = Math.max(0, probs.p0 + probs.p1) || 1;
-            const r = Math.random();
-            const outcome = (r < probs.p0 / total) ? 0 : 1;
+            // Measure qubit q in Z basis; sample once and reuse for this circuit state.
+            const storedOdds = measurementOdds?.[s]?.[q];
+            const probs = storedOdds || measureProbabilities(rho4, q);
+            let outcome = measurementOutcomes?.[s]?.[q];
+            if (outcome == null) {
+              const total = Math.max(0, probs.p0 + probs.p1) || 1;
+              const r = Math.random();
+              outcome = (r < probs.p0 / total) ? 0 : 1;
+              if (measurementOutcomes[s]) measurementOutcomes[s][q] = outcome;
+            }
+            if (!storedOdds && measurementOdds[s]) {
+              measurementOdds[s][q] = { p0: probs.p0, p1: probs.p1 };
+            }
             const { rho: collapsed } = collapseOnOutcome(rho4, q, outcome);
             rho4 = collapsed;
             measuredLatest[q] = outcome;
-            measuredEvents.push({ qubit: q, outcome });
+            measuredEvents.push({ qubit: q, outcome, step: s, probs });
             pushVecs();
             continue;
           }
@@ -1327,6 +1735,7 @@ function renderGatePalette() {
     item.className = "palette-gate";
     item.setAttribute("draggable", "true");
     item.dataset.gate = g;
+    item.dataset.tip = `Drag gate ${g}`;
 
     const box = document.createElement("div");
     box.className = "gate-box " + gateColorClass(g);
@@ -1380,11 +1789,11 @@ function renderGatePalette() {
     e.dataTransfer.dropEffect = (draggingFrom && draggingFrom.kind !== "palette") ? "move" : "copy";
   };
 
-  row.ondrop = (e) => {
-    e.preventDefault();
+    row.ondrop = (e) => {
+      e.preventDefault();
 
-    // If a gate was dragged from circuit into the library, it should disappear.
-    // Existing logic already "removes on dragstart" for circuit gates; we just finalize UI state.
+      // If a gate was dragged from circuit into the library, it should disappear.
+      // Existing logic already "removes on dragstart" for circuit gates; we just finalize UI state.
     draggingGate = null;
     draggingFrom = null;
     draggingOp = null;
@@ -1459,21 +1868,42 @@ function rebuildToStep(stepIdx) {
   const { states, traces, rho2, measuredEvents, measuredLatest } = computeBlochTraces(stepIdx);
   latestGlobalRho = rho2;
   const entangledNow = !!rho2 && isEntangledFromRho(rho2);
+  const eventsThisStep = (measuredEvents || []).filter((ev) => ev.step === stepIdx);
+  const shouldAnimateMeasure = measurementAnimEnabled && !!coinAnimator && stepIdx >= 0 && eventsThisStep.length > 0;
+  const holdMap = new Map();
 
   for (let q = 0; q < qubitCount; q++) {
     const w = widgets[q]?.widget;
     if (!w) continue;
     const state = states[q] ?? normalizeState(getInitialState(q));
     const trace = traces[q] ?? [];
-    const hideArrow = entangledNow && measuredVisualOutcomes[q] == null && q < 2;
+    const hold = shouldAnimateMeasure && eventsThisStep.some((ev) => ev.qubit === q);
+    const hideArrow = hold || (entangledNow && measuredVisualOutcomes[q] == null && q < 2);
     const hideTrace = hideArrow;
     w.setStateAndTrace(state, trace, { hideArrow, hideTrace });
     const rho = densityFromState(state);
     const purity = trace2MatSquared(rho);
     updatePurityChip(widgets[q]?.purityEl, purity);
     const m = measuredLatest?.[q] ?? null;
-    applyMeasurementVisual(q, m, { cue: false });
-    updateStateChip(q, state, rho2);
+
+    const measBadge = widgets[q]?.measEl;
+    const stateChip = widgets[q]?.stateChipEl;
+
+    if (hold) {
+      holdMap.set(q, { state, trace, outcome: m });
+      if (measBadge) {
+        measBadge.textContent = "Measuring…";
+        measBadge.classList.add("on", "pending");
+      }
+      if (stateChip) {
+        stateChip.textContent = "Measurement pending";
+        stateChip.classList.add("on", "pending");
+        stateChip.classList.remove("entangled");
+      }
+    } else {
+      applyMeasurementVisual(q, m, { cue: false });
+      updateStateChip(q, state, rho2);
+    }
   }
 
   updateEntanglementIndicators(rho2);
@@ -1483,10 +1913,14 @@ function rebuildToStep(stepIdx) {
   updateGlobalStateBadges();
 
   // cue the most recent measurement events (if any) to emphasize collapse
-  measuredEvents?.forEach(({ qubit, outcome }) => {
-    cueMeasurement(qubit);
+  measuredEvents?.forEach(({ qubit, outcome, step }) => {
+    if (shouldAnimateMeasure && step === stepIdx && holdMap.has(qubit)) return;
     applyMeasurementVisual(qubit, outcome, { cue: false, snap: true });
   });
+
+  if (shouldAnimateMeasure) {
+    return playMeasurementAnimations(eventsThisStep, holdMap, rho2);
+  }
 }
 
 function stopPlayback() {
@@ -1550,8 +1984,10 @@ async function stepBack() {
   await Promise.all(jobs);
 
   activeStep = clamp(activeStep - 1, -1, stepCount - 1);
+  clearMeasurementOutcomesFrom(activeStep + 1);
   updateActiveStepUI();
-  rebuildToStep(activeStep);
+  const animPromise = rebuildToStep(activeStep);
+  if (animPromise?.then) await animPromise;
 
   stepBusy = false;
 }
@@ -1576,7 +2012,8 @@ async function stepForward() {
 
   activeStep = clamp(next, -1, stepCount - 1);
   updateActiveStepUI();
-  rebuildToStep(activeStep);
+  const animPromise = rebuildToStep(activeStep);
+  if (animPromise?.then) await animPromise;
 
   stepBusy = false;
 }
@@ -1584,6 +2021,7 @@ async function stepForward() {
 function resetStepCursor() {
   stopPlayback();
   activeStep = -1;
+  clearMeasurementOutcomesFrom(0);
   updateActiveStepUI();
   rebuildToStep(activeStep);
 }
@@ -1632,8 +2070,11 @@ function renderCircuit() {
     const ket = document.createElement("div");
     ket.className = "cwire-ket";
     ket.style.top = `${y + 8}px`;
-    ket.innerHTML = initialStates[q] === "1" ? `\\(|1\\rangle\\)` : `\\(|0\\rangle\\)`;
+    const initLabel = INIT_STATE_MAP[initialStates[q]]?.label || "|0\\rangle";
+    ket.innerHTML = `\\(${initLabel}\\)`;
     ket.dataset.q = String(q);
+    ket.dataset.tip = "Set initial state |ψ⟩ for this wire";
+
     ket.addEventListener("click", (e) => {
       e.stopPropagation();
       showInitStateMenu(q, ket);
@@ -1704,6 +2145,7 @@ function renderCircuit() {
       gate.dataset.gate = g;
       gate.style.left = `${x - 21}px`;
       gate.style.top = `${y - 21}px`;
+      gate.dataset.tip = g === "M" ? "Measurement gate" : `Gate ${g}`;
       if (g === "M") {
         gate.classList.add("cgate-measure");
         const icon = document.createElement("div");
@@ -1762,6 +2204,7 @@ function renderCircuit() {
         g.dataset.gate = "CX";
         g.style.left = `${x - 21}px`;
         g.style.top = `${y - 21}px`;
+        g.dataset.tip = "CX control";
 
         const dot = document.createElement("div");
         dot.className = "ccontrol";
@@ -1803,6 +2246,7 @@ function renderCircuit() {
         g.dataset.gate = "CX";
         g.style.left = `${x - 21}px`;
         g.style.top = `${y - 21}px`;
+        g.dataset.tip = "CX target";
 
         const tgt = document.createElement("div");
         tgt.className = "ctarget";
@@ -1922,6 +2366,7 @@ function renderCircuit() {
   updateActiveStepUI();
 
   if (typeof MathJax !== "undefined") MathJax.typesetPromise([canvas]);
+  queueTooltipRefresh();
 }
 
 function clearCircuit() {
@@ -2170,13 +2615,6 @@ function updatePurityChip(el, purity) {
   tile?.classList.toggle("mixed", mixed);
 }
 
-function cueMeasurement(q) {
-  const tile = widgets[q]?.tileEl;
-  if (!tile) return;
-  tile.classList.add("measure-cue");
-  setTimeout(() => tile.classList.remove("measure-cue"), 140);
-}
-
 function applyMeasurementVisual(q, outcome, { cue = false, snap = false } = {}) {
   const entry = widgets[q];
   if (!entry) return;
@@ -2185,19 +2623,23 @@ function applyMeasurementVisual(q, outcome, { cue = false, snap = false } = {}) 
 
   if (outcome == null) {
     tileEl?.classList.remove("measured");
-    measEl.textContent = "";
+    measEl.innerHTML = "";
     measEl.classList.remove("on");
+    measEl.classList.remove("pending");
+    stateChipEl?.classList.remove("pending");
     return;
   }
 
-  if (cue) cueMeasurement(q);
   tileEl?.classList.remove("entangled", "mixed");
   tileEl?.classList.add("measured");
-  measEl.textContent = `Measured: |${outcome}⟩`;
+  measEl.innerHTML = `State collapsed: \\(|${outcome}\\rangle\\)`;
   measEl.classList.add("on");
+  measEl.classList.remove("pending");
+  typesetNode(measEl);
   if (stateChipEl) {
     stateChipEl.innerHTML = `\\(|\\psi_{${q}}\\rangle = |${outcome}\\rangle\\)`;
     stateChipEl.classList.remove("entangled");
+    stateChipEl.classList.remove("pending");
     typesetNode(stateChipEl);
   }
 
@@ -2209,6 +2651,39 @@ function applyMeasurementVisual(q, outcome, { cue = false, snap = false } = {}) 
     widget.setStateAndTrace(normalizeState(pure), [{ x: 0, y: 0, z: outcome === 0 ? 1 : -1 }]);
     updatePurityChip(purityEl, 1);
   }
+}
+
+function revealHeldMeasurement(q, held, rho2) {
+  if (!held) return;
+  const entry = widgets[q];
+  if (entry?.widget) {
+    entry.widget.setStateAndTrace(held.state, held.trace, { hideArrow: false, hideTrace: false });
+  }
+  if (entry?.stateChipEl) {
+    entry.stateChipEl.classList.remove("pending");
+  }
+  applyMeasurementVisual(q, held.outcome, { cue: true, snap: true });
+  updateStateChip(q, held.state, rho2);
+}
+
+function playMeasurementAnimations(events, holdMap, rho2) {
+  if (!events?.length || !coinAnimator || !measurementAnimEnabled) return null;
+  measurementAnimRunId += 1;
+  const runId = measurementAnimRunId;
+  document.body.classList.add("coin-anim-visible");
+
+  const seq = (async () => {
+    for (const ev of events) {
+      const label = `q${ev.qubit}`;
+      await coinAnimator.play(ev.outcome, { label, probs: ev.probs });
+      if (runId !== measurementAnimRunId) return;
+      revealHeldMeasurement(ev.qubit, holdMap.get(ev.qubit), rho2);
+    }
+  })();
+
+  return seq.finally(() => {
+    if (runId === measurementAnimRunId) document.body.classList.remove("coin-anim-visible");
+  });
 }
 
 function updateProbPopover() {
@@ -2715,6 +3190,10 @@ window.addEventListener("load", () => {
   });
   $("openProbBtn")?.addEventListener("click", (e) => { e.stopPropagation(); toggleProbPopover(); });
   $("openMathBtn")?.addEventListener("click", (e) => { e.stopPropagation(); openBackendDrawer(); });
+  $("toggleMeasurementAnim")?.addEventListener("change", (e) => {
+    measurementAnimEnabled = !!e.target.checked;
+    if (!measurementAnimEnabled) document.body.classList.remove("coin-anim-visible");
+  });
 
   // deleteSelection: conservative
   $("deleteSelection")?.addEventListener("click", () => {
@@ -2855,4 +3334,17 @@ $("gateLibToggle")?.addEventListener("click", (e) => {
     const ro = new ResizeObserver(() => requestAnimationFrame(resizeAllWidgets));
     ro.observe(circuitGrid);
   }
+
+  // Measurement animation boot
+  const coinMount = $("coinMount");
+  const coinLabel = $("coinOutcomeLabel");
+  const coinOdds = $("coinOdds");
+  if (coinMount) {
+    coinAnimator = new CoinFlipAnimator({ mountEl: coinMount, statusEl: coinLabel, oddsEl: coinOdds });
+    coinAnimator.init();
+    window.addEventListener("resize", () => coinAnimator?.resize?.());
+  }
+
+  // Hover tooltips for all interactable buttons
+  initTooltips();
 });
