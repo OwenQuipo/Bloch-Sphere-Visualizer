@@ -1,4 +1,5 @@
 // main.js
+import "./styles.css";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
@@ -34,6 +35,72 @@ function fmtComplex(z, digits = 2, eps = 1e-10) {
   return `${reStr} ${sign} ${imStr}i`;
 }
 
+const SQ = 1 / Math.sqrt(2);
+
+const EXACT_COMPLEX = [
+  { re: 1, im: 0, latex: "1" },
+  { re: -1, im: 0, latex: "-1" },
+  { re: 0, im: 1, latex: "i" },
+  { re: 0, im: -1, latex: "-i" },
+  { re: SQ, im: 0, latex: "\\tfrac{1}{\\sqrt{2}}" },
+  { re: -SQ, im: 0, latex: "-\\tfrac{1}{\\sqrt{2}}" },
+  { re: 0, im: SQ, latex: "\\tfrac{i}{\\sqrt{2}}" },
+  { re: 0, im: -SQ, latex: "-\\tfrac{i}{\\sqrt{2}}" },
+  { re: SQ, im: SQ, latex: "\\tfrac{1+i}{\\sqrt{2}}" },
+  { re: SQ, im: -SQ, latex: "\\tfrac{1-i}{\\sqrt{2}}" },
+  { re: -SQ, im: SQ, latex: "-\\tfrac{1-i}{\\sqrt{2}}" },
+  { re: -SQ, im: -SQ, latex: "-\\tfrac{1+i}{\\sqrt{2}}" },
+  { re: Math.cos(Math.PI / 4), im: Math.sin(Math.PI / 4), latex: "e^{i\\pi/4}" },
+  { re: Math.cos(-Math.PI / 4), im: Math.sin(-Math.PI / 4), latex: "e^{-i\\pi/4}" },
+  { re: Math.cos(Math.PI / 2), im: Math.sin(Math.PI / 2), latex: "e^{i\\pi/2}" },
+  { re: Math.cos(-Math.PI / 2), im: Math.sin(-Math.PI / 2), latex: "e^{-i\\pi/2}" },
+];
+
+function approx(a, b, tol = 1e-6) { return Math.abs(a - b) < tol; }
+
+function toFraction(x, maxDen = 128, tol = 1e-6) {
+  if (!Number.isFinite(x)) return { num: 0, den: 1 };
+  if (Math.abs(x) < tol) return { num: 0, den: 1 };
+  const sign = x < 0 ? -1 : 1;
+  let h1 = 1, h2 = 0, k1 = 0, k2 = 1;
+  let b = Math.abs(x);
+  do {
+    const a = Math.floor(b);
+    const h = a * h1 + h2;
+    const k = a * k1 + k2;
+    h2 = h1; h1 = h;
+    k2 = k1; k1 = k;
+    const frac = h / k;
+    if (k > maxDen || Math.abs(frac - Math.abs(x)) < tol) {
+      return { num: sign * h, den: k };
+    }
+    b = 1 / (b - a);
+  } while (true);
+}
+
+function fracLatex({ num, den }) {
+  if (den === 1) return String(num);
+  return `\\tfrac{${num}}{${den}}`;
+}
+
+function formatExactComplex(z, tol = 1e-6) {
+  const re = Math.abs(z.re) < tol ? 0 : z.re;
+  const im = Math.abs(z.im) < tol ? 0 : z.im;
+
+  const exact = EXACT_COMPLEX.find((t) => approx(re, t.re, tol) && approx(im, t.im, tol));
+  if (exact) return exact.latex;
+
+  const reFrac = toFraction(re, 128, tol);
+  const imFrac = toFraction(im, 128, tol);
+
+  if (Math.abs(im) < tol) return fracLatex(reFrac);
+  if (Math.abs(re) < tol) return `${fracLatex(imFrac)}i`;
+
+  const sign = im >= 0 ? "+" : "-";
+  const imStr = fracLatex({ num: Math.abs(imFrac.num), den: imFrac.den });
+  return `${fracLatex(reFrac)} ${sign} ${imStr}i`;
+}
+
 // -------------------- Bloch vector (existing) --------------------
 const BLOCH_Y_SIGN = -1;
 
@@ -52,7 +119,6 @@ function getBlochVectorFromState(state) {
 }
 
 // -------------------- Gates (existing) --------------------
-const SQ = 1 / Math.sqrt(2);
 
 const GATES = {
   X: { matrix: [[c(0, 0), c(1, 0)], [c(1, 0), c(0, 0)]], axis: { x: 1, y: 0, z: 0 }, angle: Math.PI },
@@ -698,23 +764,38 @@ function placeCXDirect(step, control, target) {
 // -------------------- Gate matrix LaTeX (used for hover preview) --------------------
 function gateMatrixLatex(g) {
   const gate = GATES[g];
-  if (!gate || !gate.matrix) return "";
-  const M = gate.matrix;
-  const f = (z) => {
-    const re = (Math.abs(z.re) < 1e-10) ? 0 : z.re;
-    const im = (Math.abs(z.im) < 1e-10) ? 0 : z.im;
-    if (im === 0) return re.toFixed(2);
-    if (re === 0) return `${im.toFixed(2)}i`;
-    const sign = im >= 0 ? "+" : "-";
-    return `${re.toFixed(2)} ${sign} ${Math.abs(im).toFixed(2)}i`;
-  };
+  const identity = [[c(1, 0), c(0, 0)], [c(0, 0), c(1, 0)]];
+  const M = gate?.matrix ?? identity;
+  const f = (z) => formatExactComplex(z);
   return `\\[
-${g} =
+${g || "I"} =
 \\begin{pmatrix}
 ${f(M[0][0])} & ${f(M[0][1])} \\\\
 ${f(M[1][0])} & ${f(M[1][1])}
 \\end{pmatrix}
 \\]`;
+}
+
+function matrixLatex(label, matrix) {
+  const f = (z) => formatExactComplex(z);
+  return `\\[
+${label} =
+\\begin{pmatrix}
+${f(matrix[0][0])} & ${f(matrix[0][1])} \\\\
+${f(matrix[1][0])} & ${f(matrix[1][1])}
+\\end{pmatrix}
+\\]`;
+}
+
+function densityMatrix(state) {
+  const a = state.alpha;
+  const b = state.beta;
+  const aConj = cConj(a);
+  const bConj = cConj(b);
+  return [
+    [cmul(a, aConj), cmul(a, bConj)],
+    [cmul(aConj, b), cmul(b, bConj)],
+  ];
 }
 
 function updateGateHoverMath(gateName) {
@@ -1362,6 +1443,11 @@ function updateBackdrop() {
 function openBackendDrawer() {
   uiState.backendOpen = true;
   document.body.classList.add("backend-open");
+  const showMatrixToggle = $("toggleShowMatrix");
+  if (showMatrixToggle) {
+    showMatrixToggle.checked = true;
+    document.body.classList.add("show-matrix");
+  }
   $("backendDrawer")?.setAttribute("aria-hidden", "false");
   updateBackdrop();
   updateBackendMath();
@@ -1416,6 +1502,7 @@ function updateSelectionState() {
 }
 
 const GATELIB_COLLAPSE_KEY = "gateLibCollapsed";
+const GATELIB_POS_KEY = "gateLibPos";
 
 function setGateLibCollapsed(collapsed) {
   document.body.classList.toggle("gate-lib-collapsed", !!collapsed);
@@ -1427,6 +1514,79 @@ function toggleGateLibCollapsed() {
   setGateLibCollapsed(!isCollapsed);
 }
 
+function applyGateLibPosition(pos) {
+  const panel = $("gateLibrary");
+  if (!panel) return;
+  const rect = panel.getBoundingClientRect();
+  const pad = 8;
+  const defaultTop = window.innerHeight - rect.height - 18;
+  const defaultLeft = 18;
+  const left = clamp(pos?.left ?? defaultLeft, pad, Math.max(pad, window.innerWidth - rect.width - pad));
+  const top = clamp(pos?.top ?? defaultTop, pad, Math.max(pad, window.innerHeight - rect.height - pad));
+  panel.style.left = `${left}px`;
+  panel.style.top = `${top}px`;
+  panel.style.right = "auto";
+  panel.style.bottom = "auto";
+  return { left, top };
+}
+
+function initGateLibraryDrag() {
+  const panel = $("gateLibrary");
+  if (!panel) return;
+
+  let savedPos = null;
+  try { savedPos = JSON.parse(localStorage.getItem(GATELIB_POS_KEY)); } catch {}
+  let currentPos = applyGateLibPosition(savedPos);
+
+  let start = null;
+
+  const startDrag = (ev) => {
+    if (ev.button !== 0) return;
+    if (ev.target && ev.target.closest("[draggable]")) return;
+    if (ev.target && ev.target.closest("button, input, select, label")) return;
+    const rect = panel.getBoundingClientRect();
+    start = {
+      x: ev.clientX,
+      y: ev.clientY,
+      left: rect.left,
+      top: rect.top,
+      width: rect.width,
+      height: rect.height,
+    };
+    panel.setPointerCapture?.(ev.pointerId);
+    ev.preventDefault();
+  };
+
+  const moveDrag = (ev) => {
+    if (!start) return;
+    const dx = ev.clientX - start.x;
+    const dy = ev.clientY - start.y;
+    const pad = 8;
+    const nextLeft = clamp(start.left + dx, pad, Math.max(pad, window.innerWidth - start.width - pad));
+    const nextTop = clamp(start.top + dy, pad, Math.max(pad, window.innerHeight - start.height - pad));
+    panel.style.left = `${nextLeft}px`;
+    panel.style.top = `${nextTop}px`;
+    panel.style.right = "auto";
+    panel.style.bottom = "auto";
+    currentPos = { left: nextLeft, top: nextTop };
+  };
+
+  const endDrag = () => {
+    if (!start) return;
+    try { localStorage.setItem(GATELIB_POS_KEY, JSON.stringify(currentPos)); } catch {}
+    start = null;
+  };
+
+  panel.addEventListener("pointerdown", startDrag);
+  panel.addEventListener("pointermove", moveDrag);
+  panel.addEventListener("pointerup", endDrag);
+  panel.addEventListener("pointercancel", endDrag);
+
+  window.addEventListener("resize", () => {
+    currentPos = applyGateLibPosition(currentPos);
+  });
+}
+
 // -------------------- Bloch overlay controls --------------------
 function setTrajectoryVisible(on) {
   widgets.forEach(({ widget }) => {
@@ -1435,6 +1595,12 @@ function setTrajectoryVisible(on) {
 }
 
 // -------------------- Prob popover --------------------
+function formatProbabilityLatex(p) {
+  const clamped = Math.max(0, Math.min(1, p));
+  const frac = toFraction(clamped, 256, 1e-6);
+  return fracLatex(frac);
+}
+
 function updateProbPopover() {
   const host = $("probHistogram");
   if (!host) return;
@@ -1444,20 +1610,21 @@ function updateProbPopover() {
 
   const p0 = cAbs2(w.state.alpha);
   const p1 = cAbs2(w.state.beta);
-
-  const fmt = (x) => (Math.max(0, Math.min(1, x)) * 100).toFixed(1) + "%";
+  const alpha = formatExactComplex(w.state.alpha);
+  const beta = formatExactComplex(w.state.beta);
 
   host.innerHTML = `
-    <div class="bar">
-      <div>|0⟩</div>
+    <div class="bar prob-row">
+      <div class="prob-state">|0⟩</div>
       <div class="bar-track"><div class="bar-fill" style="width:${Math.max(0, Math.min(1, p0)) * 100}%"></div></div>
-      <div>${fmt(p0)}</div>
+      <div class="prob-math">\\(\\Pr(|0\\rangle) = |\\alpha|^{2} = ${formatProbabilityLatex(p0)}\\)</div>
     </div>
-    <div class="bar">
-      <div>|1⟩</div>
+    <div class="bar prob-row">
+      <div class="prob-state">|1⟩</div>
       <div class="bar-track"><div class="bar-fill" style="width:${Math.max(0, Math.min(1, p1)) * 100}%"></div></div>
-      <div>${fmt(p1)}</div>
+      <div class="prob-math">\\(\\Pr(|1\\rangle) = |\\beta|^{2} = ${formatProbabilityLatex(p1)}\\)</div>
     </div>
+    <div class="prob-statevector">\\(|\\psi\\rangle = ${alpha}\\,|0\\rangle + ${beta}\\,|1\\rangle\\)</div>
   `;
 
   if (typeof MathJax !== "undefined") MathJax.typesetPromise([host]);
@@ -1478,19 +1645,19 @@ function updateBackendMath() {
   if (!uiState.backendOpen) return;
 
   const simplify = $("toggleSimplify")?.checked ?? true;
+  const tol = simplify ? 1e-4 : 1e-7;
   const showMatrix = $("toggleShowMatrix")?.checked ?? false;
   document.body.classList.toggle("show-matrix", !!showMatrix);
 
-  const digits = simplify ? 2 : 4;
   const g = (activeStep >= 0) ? singleQ[selectedQubit]?.[activeStep] : null;
 
   const prevState = computeStateAtStep(activeStep - 1, selectedQubit);
   const curState  = computeStateAtStep(activeStep, selectedQubit);
 
-  const prevA = fmtComplex(prevState.alpha, digits);
-  const prevB = fmtComplex(prevState.beta, digits);
-  const curA  = fmtComplex(curState.alpha, digits);
-  const curB  = fmtComplex(curState.beta, digits);
+  const prevA = formatExactComplex(prevState.alpha, tol);
+  const prevB = formatExactComplex(prevState.beta, tol);
+  const curA  = formatExactComplex(curState.alpha, tol);
+  const curB  = formatExactComplex(curState.beta, tol);
 
   const gateStr = g ? `\\text{Gate: } ${g}` : `\\text{Gate: } I`;
   const updateStr = g ? `|\\psi_{t}\\rangle = ${g}\\,|\\psi_{t-1}\\rangle` : `|\\psi\\rangle = |0\\rangle`;
@@ -1530,7 +1697,11 @@ ${curB}
   if (elUpd) elUpd.innerHTML = `\\[${updateStr}\\]${stateLine}`;
   if (elBloch) elBloch.innerHTML = blochStr;
   if (elNotes) elNotes.innerHTML = notesStr;
-  if (elMat) elMat.innerHTML = showMatrix && g && GATES[g] ? gateMatrixLatex(g) : "";
+  if (elMat) {
+    const gateLatex = gateMatrixLatex(g || "I");
+    const rhoLatex = matrixLatex(`\\rho_{${selectedQubit + 1}}`, densityMatrix(curState));
+    elMat.innerHTML = showMatrix ? gateLatex + rhoLatex : "";
+  }
 
   if (typeof MathJax !== "undefined") {
     const nodes = [elGate, elUpd, elBloch, elNotes, elMat].filter(Boolean);
@@ -1596,6 +1767,7 @@ window.addEventListener("load", () => {
   // Gate library: always visible + render once
   renderGatePalette();
   updateGateHoverMath(null);
+  initGateLibraryDrag();
 
   // Keep qubit UI in sync at boot
   syncQubitCountUI();
@@ -1618,6 +1790,15 @@ window.addEventListener("load", () => {
   $("toggleTrajectory")?.addEventListener("change", (e) => setTrajectoryVisible(!!e.target.checked));
   $("openProbPopover")?.addEventListener("click", (e) => { e.stopPropagation(); toggleProbPopover(); });
   $("openBackendDrawer")?.addEventListener("click", (e) => { e.stopPropagation(); toggleBackendDrawer(); });
+  $("toggleTrajectoryBtn")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const cb = $("toggleTrajectory");
+    const next = !(cb?.checked ?? true);
+    if (cb) cb.checked = next;
+    setTrajectoryVisible(next);
+  });
+  $("openProbBtn")?.addEventListener("click", (e) => { e.stopPropagation(); toggleProbPopover(); });
+  $("openMathBtn")?.addEventListener("click", (e) => { e.stopPropagation(); openBackendDrawer(); });
 
   // deleteSelection: conservative
   $("deleteSelection")?.addEventListener("click", () => {
@@ -1631,27 +1812,62 @@ window.addEventListener("load", () => {
   $("toggleShowMatrix")?.addEventListener("change", () => updateBackendMath());
   $("copyLatex")?.addEventListener("click", () => copyBackendLatex());
 
-  // Drawer handle: drag down to close
+  // Drawer resizing: drag the math panel (or handle) to resize/close
   {
     const handle = $("drawerHandle");
-    if (handle) {
+    const panel = $("unitaryMath");
+    const drawer = $("backendDrawer");
+    const parseLen = (val, fallbackPx) => {
+      if (!val) return fallbackPx;
+      const trimmed = String(val).trim();
+      if (trimmed.endsWith("vh")) {
+        const n = parseFloat(trimmed);
+        return Number.isFinite(n) ? (window.innerHeight * n) / 100 : fallbackPx;
+      }
+      const n = parseFloat(trimmed);
+      return Number.isFinite(n) ? n : fallbackPx;
+    };
+    const getBounds = () => {
+      const root = getComputedStyle(document.documentElement);
+      const minH = parseLen(root.getPropertyValue("--drawerMinH"), 160);
+      const maxH = parseLen(root.getPropertyValue("--drawerMaxH"), window.innerHeight * 0.95);
+      return { minH, maxH };
+    };
+    const getCurrentHeight = () => {
+      if (drawer) return drawer.getBoundingClientRect().height;
+      const root = getComputedStyle(document.documentElement);
+      return parseLen(root.getPropertyValue("--drawerH"), window.innerHeight * 0.32);
+    };
+    const attachResize = (el) => {
+      if (!el || !drawer) return;
       let startY = null;
-      handle.addEventListener("pointerdown", (ev) => {
-        if (!uiState.backendOpen) return;
+      let startH = null;
+      el.addEventListener("pointerdown", (ev) => {
+        if (!uiState.backendOpen || ev.button !== 0) return;
         startY = ev.clientY;
-        handle.setPointerCapture?.(ev.pointerId);
+        startH = getCurrentHeight();
+        el.setPointerCapture?.(ev.pointerId);
+        ev.preventDefault();
       });
-      handle.addEventListener("pointermove", (ev) => {
-        if (startY == null) return;
+      el.addEventListener("pointermove", (ev) => {
+        if (startY == null || startH == null) return;
         const dy = ev.clientY - startY;
-        if (dy > 70) {
+        if (dy > 140) {
           startY = null;
+          startH = null;
           closeBackendDrawer();
+          return;
         }
+        const { minH, maxH } = getBounds();
+        const nextH = Math.max(minH, Math.min(maxH, startH - dy));
+        drawer.style.height = `${nextH}px`;
       });
-      handle.addEventListener("pointerup", () => { startY = null; });
-      handle.addEventListener("pointercancel", () => { startY = null; });
-    }
+      const resetDrag = () => { startY = null; startH = null; };
+      el.addEventListener("pointerup", resetDrag);
+      el.addEventListener("pointercancel", resetDrag);
+    };
+    attachResize(handle);
+    attachResize(panel);
   }
 
   // More menu

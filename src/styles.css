@@ -12,16 +12,17 @@
   --line: rgba(245, 245, 245, 0.10);
 
   --accent: rgba(160, 170, 185, 0.55);
+  --glow: rgba(120, 210, 255, 0.55);
 
-  --pad: 12px;
-  --gap: 10px;
+  --pad: 16px;
+  --gap: 14px;
 
   --splitLeft: 44%;
   --splitW: 10px;
 
   --drawerH: 32vh;
   --drawerMinH: 180px;
-  --drawerMaxH: 55vh;
+  --drawerMaxH: 95vh;
 
   /* gate library fixed width to avoid messing up drag coords */
   --gateLibW: 360px;
@@ -39,7 +40,7 @@ html, body{
 #qubit-visualizer{
   height: 100vh;
   display: grid;
-  grid-template-rows: 48px 1fr;
+  grid-template-rows: 52px 1fr;
   gap: var(--gap);
   padding: var(--pad);
   box-sizing: border-box;
@@ -49,13 +50,13 @@ html, body{
    Layout
    ========================= */
 #topbar{
-  height: 48px;
+  height: 52px;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 0 10px;
+  gap: 12px;
+  padding: 0 16px;
   background: var(--surface2);
-  border-radius: 12px;
+  border-radius: 14px;
   user-select: none;
 }
 
@@ -77,10 +78,12 @@ html, body{
 
 .pane{
   min-height: 0;
-  border-radius: 14px;
+  border-radius: 16px;
   background: rgba(255,255,255,0.02);
   position: relative;
   overflow: hidden;
+  padding: 6px;
+  box-sizing: border-box;
 }
 
 /* =========================
@@ -111,10 +114,10 @@ body.split-dragging .splitter::before{ opacity: 0.60; }
    Buttons (minimal)
    ========================= */
 .icon-btn{
-  height: 32px;
-  min-width: 32px;
-  padding: 0 10px;
-  border-radius: 10px;
+  height: 36px;
+  min-width: 36px;
+  padding: 0 14px;
+  border-radius: 12px;
   border: 0;
   background: rgba(245,245,245,0.06);
   color: var(--text);
@@ -124,7 +127,10 @@ body.split-dragging .splitter::before{ opacity: 0.60; }
   gap: 8px;
   cursor: pointer;
 }
-.icon-btn:hover{ background: rgba(245,245,245,0.10); }
+.icon-btn:hover{
+  background: rgba(245,245,245,0.10);
+  box-shadow: 0 0 0 1px var(--glow), 0 0 14px var(--glow);
+}
 .icon-btn[disabled]{ opacity: 0.35; cursor: default; }
 
 .ico{ font-size: 0.95rem; line-height: 1; opacity: 0.92; }
@@ -132,17 +138,17 @@ body.split-dragging .splitter::before{ opacity: 0.60; }
 .step-controls{
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
 
 .step-counter{
   font-size: 0.80rem;
   color: var(--muted);
-  padding: 0 10px;
-  height: 32px;
+  padding: 0 12px;
+  height: 34px;
   display: inline-flex;
   align-items: center;
-  border-radius: 10px;
+  border-radius: 12px;
   background: rgba(245,245,245,0.04);
 }
 
@@ -157,7 +163,7 @@ body.split-dragging .splitter::before{ opacity: 0.60; }
    ========================= */
 #blochCanvas{
   height: 100%;
-  padding: 10px;
+  padding: 14px;
   box-sizing: border-box;
   overflow: auto;
 }
@@ -171,9 +177,9 @@ body.split-dragging .splitter::before{ opacity: 0.60; }
 
 .bloch-tile{
   background: rgba(245,245,245,0.03);
-  border-radius: 14px;
-  padding: 10px;
-  min-height: 360px;
+  border-radius: 16px;
+  padding: 14px;
+  min-height: 380px;
   display: grid;
   grid-template-rows: auto 1fr;
   gap: 10px;
@@ -198,7 +204,7 @@ body.split-dragging .splitter::before{ opacity: 0.60; }
    ========================= */
 #circuitCanvas{
   height: 100%;
-  padding: 10px;
+  padding: 14px;
   box-sizing: border-box;
 }
 
@@ -366,7 +372,7 @@ body.is-playing #blochOverlay{ opacity: 0.25; }
   color: var(--text);
   font-size: 0.80rem;
 }
-.micro-btn:hover{ background: rgba(245,245,245,0.10); }
+.micro-btn:hover{ background: rgba(245,245,245,0.10); box-shadow: 0 0 0 1px var(--glow), 0 0 12px var(--glow); }
 
 .micro-toggle{ display: inline-flex; align-items: center; cursor: pointer; }
 .micro-toggle input{ display: none; }
@@ -383,6 +389,9 @@ body.is-playing #blochOverlay{ opacity: 0.25; }
 .micro-toggle input:checked + .micro-pill{
   background: rgba(160, 170, 185, 0.22);
   box-shadow: inset 0 0 0 1px rgba(245,245,245,0.10);
+}
+.micro-toggle:hover .micro-pill{
+  box-shadow: 0 0 0 1px var(--glow), 0 0 12px var(--glow);
 }
 
 /* =========================
@@ -445,7 +454,9 @@ body.is-playing #blochOverlay{ opacity: 0.25; }
   border-radius: 12px;
   background: rgba(245,245,245,0.04);
   padding: 6px;
+  cursor: grab;
 }
+.palette-gate:active{ cursor: grabbing; }
 
 .gate-box{
   width: 46px;
@@ -456,6 +467,10 @@ body.is-playing #blochOverlay{ opacity: 0.25; }
   justify-content: center;
   font-weight: 700;
   box-shadow: inset 0 0 0 1px rgba(245,245,245,0.10);
+}
+.palette-gate:hover .gate-box{
+  box-shadow: 0 0 0 1px var(--glow), 0 0 14px var(--glow);
+  background: rgba(245,245,245,0.08);
 }
 
 /* =========================
@@ -481,7 +496,7 @@ body.is-playing #blochOverlay{ opacity: 0.25; }
   z-index: 5000;
 
   display: grid;
-  grid-template-rows: 44px 1fr 10px;
+  grid-template-rows: 44px 1fr 14px;
   overflow: hidden;
 }
 body.backend-open #backendDrawer{ transform: translateY(0); }
@@ -521,6 +536,7 @@ body.backend-open #backendDrawer{ transform: translateY(0); }
   padding: 12px;
   min-height: 0;
   overflow: auto;
+  cursor: ns-resize;
 }
 .math-col{
   display: flex;
@@ -547,7 +563,11 @@ body.backend-open #backendDrawer{ transform: translateY(0); }
 }
 #matrixBlock{ display: none; }
 body.show-matrix #matrixBlock{ display: block; }
-.drawer-handle{ background: rgba(245,245,245,0.06); }
+.drawer-handle{
+  background: rgba(245,245,245,0.06);
+  cursor: ns-resize;
+  touch-action: none;
+}
 
 /* =========================
    Prob popover
@@ -575,9 +595,9 @@ body.prob-open #probPopover{ display: block; }
 }
 .bar{
   display: grid;
-  grid-template-columns: 34px 1fr 52px;
+  grid-template-columns: 42px 1fr;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   font-size: 0.78rem;
   color: var(--muted);
@@ -593,6 +613,26 @@ body.prob-open #probPopover{ display: block; }
   width: 0%;
   background: rgba(180, 190, 205, 0.55);
   border-radius: 999px;
+}
+.prob-row{
+  grid-template-columns: 52px 1fr;
+  row-gap: 8px;
+  padding: 4px 2px;
+}
+.prob-state{
+  align-self: center;
+}
+.prob-math{
+  grid-column: 1 / span 2;
+  color: var(--text);
+  font-size: 0.82rem;
+}
+.prob-statevector{
+  grid-column: 1 / span 2;
+  padding: 6px 2px 2px 2px;
+  color: var(--text);
+  font-size: 0.86rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
 }
 .popover-note{
   margin-top: 6px;
@@ -632,7 +672,10 @@ body.menu-open #moreMenuPopover{ display: block; }
   cursor: pointer;
   font-size: 0.86rem;
 }
-.menu-item:hover{ background: rgba(245,245,245,0.06); }
+.menu-item:hover{
+  background: rgba(245,245,245,0.06);
+  box-shadow: 0 0 0 1px var(--glow), 0 0 12px var(--glow);
+}
 .menu-item.danger{ color: rgba(255, 160, 160, 0.95); }
 
 .menu-sep{
@@ -689,19 +732,6 @@ body.menu-open #overlayBackdrop{
   justify-content: flex-start;
   padding-bottom: 8px;
 }
-
-.iconChip{
-  padding: 6px 10px;
-  border-radius: 999px;
-  border: 0;
-  background: rgba(255,255,255,0.06);
-  color: rgba(245,245,245,0.92);
-  font-size: 12px;
-  cursor: pointer;
-  opacity: 0.9;
-}
-.iconChip:hover{ opacity: 1; background: rgba(255,255,255,0.09); }
-.iconChip.is-on{ background: rgba(255,255,255,0.12); }
 /* =========================
    Gate library minimize / maximize
    ========================= */
@@ -709,7 +739,9 @@ body.menu-open #overlayBackdrop{
 /* Default: open */
 #gateLibrary{
   --gateLibCollapsedH: 56px;
+  cursor: grab;
 }
+#gateLibrary:active{ cursor: grabbing; }
 
 /* When collapsed, keep header visible but hide the rest */
 body.gate-lib-collapsed #gateLibrary .gate-hover-math,

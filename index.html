@@ -8,18 +8,6 @@
 
   <!-- MathJax for LaTeX rendering -->
   <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
-
-  <!-- ESM import map for Three.js (works without a bundler) -->
-  <script type="importmap">
-    {
-      "imports": {
-        "three": "https://unpkg.com/three@0.161.0/build/three.module.js",
-        "three/examples/jsm/controls/OrbitControls.js": "https://unpkg.com/three@0.161.0/examples/jsm/controls/OrbitControls.js"
-      }
-    }
-  </script>
-
-  <link rel="stylesheet" href="./styles.css" />
 </head>
 
 <body>
@@ -155,12 +143,6 @@
     <!-- =========================
          Gate library (ALWAYS visible)
          ========================= -->
-      <div class="gateLibTopControls">
-        <button class="iconChip" id="toggleTrajectoryBtn" type="button" title="Toggle trail">Trail</button>
-        <button class="iconChip" id="openProbBtn" type="button" title="Probabilities">Probs</button>
-        <button class="iconChip" id="openMathBtn" type="button" title="Backend math">Math</button>
-      </div>
-
     <div id="gateLibrary" class="floating-panel always-open" aria-label="Gate library">
       <div class="floating-header">
         <button id="gateLibToggle" class="icon-btn" type="button" title="Minimize/Maximize (L)">
@@ -244,6 +226,6 @@
     <div id="overlayBackdrop" class="backdrop" aria-hidden="true"></div>
   </div>
 
-  <script type="module" src="./main.js"></script>
+  <script type="module" src="/src/main.js"></script>
 </body>
 </html>
