@@ -93,6 +93,28 @@
       <section id="blochPane" class="pane" aria-label="Bloch pane">
         <div id="blochCanvas" aria-label="Bloch canvas region">
           <div id="bloch-grid"></div>
+          <div id="entanglementBadge">State stored in correlations</div>
+          <div id="correlationsPanel" class="micro-panel" aria-label="Correlations panel">
+            <div class="micro-row">
+              <div class="micro-title">Correlations</div>
+              <button id="inspectRho" class="micro-icon" title="Inspect density matrix">⧉</button>
+            </div>
+            <div class="corr-row"><span>&lt;X⊗X&gt;</span><div class="corr-bar"><div id="corrXX" class="corr-fill"></div></div><span id="corrXXVal" class="corr-val">0</span></div>
+            <div class="corr-row"><span>&lt;Y⊗Y&gt;</span><div class="corr-bar"><div id="corrYY" class="corr-fill"></div></div><span id="corrYYVal" class="corr-val">0</span></div>
+            <div class="corr-row"><span>&lt;Z⊗Z&gt;</span><div class="corr-bar"><div id="corrZZ" class="corr-fill"></div></div><span id="corrZZVal" class="corr-val">0</span></div>
+            <div class="corr-actions">
+              <button id="measureQ0" class="micro-btn" type="button">Measure q0</button>
+              <button id="measureQ1" class="micro-btn" type="button">Measure q1</button>
+            </div>
+          </div>
+
+          <div id="inspectPopover" class="popover inspect-popover" aria-label="Density matrix heatmap">
+            <div class="inspect-header">
+              <div>ρ (2-qubit)</div>
+              <button id="closeInspect" class="micro-icon" title="Close">×</button>
+            </div>
+            <div id="inspectGrid" class="inspect-grid"></div>
+          </div>
         </div>
 
         <!-- micro overlay (bottom-left) -->
@@ -123,14 +145,6 @@
 
       <!-- Circuit pane -->
       <section id="circuitPane" class="pane" aria-label="Circuit pane">
-        <!-- circuit toolstrip (kept, but not required for qubit add/remove anymore) -->
-        <div id="circuitToolstrip" class="toolstrip" aria-label="Circuit toolstrip">
-          <button id="addQubit" class="icon-btn" title="Add qubit"><span class="ico">＋</span></button>
-          <button id="removeQubit" class="icon-btn" title="Remove qubit"><span class="ico">−</span></button>
-          <button id="deleteSelection" class="icon-btn" title="Delete selected"><span class="ico">⌫</span></button>
-          <button id="openGateLibrary" class="icon-btn" title="Gate Library"><span class="ico">▦</span></button>
-        </div>
-
         <!-- Circuit canvas area (existing IDs preserved) -->
         <div id="circuitCanvas">
           <div id="circuit-grid">
@@ -224,6 +238,7 @@
 
     <!-- lightweight backdrop for overlays (NOT used for gate library anymore) -->
     <div id="overlayBackdrop" class="backdrop" aria-hidden="true"></div>
+    <div id="toast" class="toast"></div>
   </div>
 
   <script type="module" src="/src/main.js"></script>

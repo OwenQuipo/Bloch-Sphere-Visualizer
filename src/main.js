@@ -17,6 +17,10 @@ function cmul(a, b) {
   return { re: a.re * b.re - a.im * b.im, im: a.re * b.im + a.im * b.re };
 }
 
+function cAddScaled(a, b, scale) {
+  return { re: a.re + b.re * scale, im: a.im + b.im * scale };
+}
+
 function normalizeState(state) {
   const n2 = cAbs2(state.alpha) + cAbs2(state.beta);
   const n = Math.sqrt(n2) || 1;
@@ -104,18 +108,21 @@ function formatExactComplex(z, tol = 1e-6) {
 // -------------------- Bloch vector (existing) --------------------
 const BLOCH_Y_SIGN = -1;
 
-function getBlochVectorFromState(state) {
-  normalizeState(state);
+function densityFromState(state) {
+  if (state?.rho) return state.rho;
   const a = state.alpha;
   const b = state.beta;
+  const aConj = cConj(a);
+  const bConj = cConj(b);
+  return [
+    [cmul(a, aConj), cmul(a, bConj)],
+    [cmul(aConj, b), cmul(b, bConj)],
+  ];
+}
 
-  const ab = cmul(a, cConj(b)); // α β*
-  const x = 2 * ab.re;
-  const y = BLOCH_Y_SIGN * 2 * ab.im;
-  const z = cAbs2(a) - cAbs2(b);
-
-  const len = Math.sqrt(x * x + y * y + z * z) || 1;
-  return { x: x / len, y: y / len, z: z / len };
+function getBlochVectorFromState(state) {
+  const rho = densityFromState(state);
+  return blochFromRho(rho);
 }
 
 // -------------------- Gates (existing) --------------------
@@ -148,6 +155,8 @@ const GATES = {
     axis: { x: 0, y: 0, z: 1 },
     angle: -Math.PI / 4,
   },
+  // Measurement: visual only, treated as identity for math/animation.
+  M: { matrix: [[c(1, 0), c(0, 0)], [c(0, 0), c(1, 0)]], axis: { x: 0, y: 0, z: 1 }, angle: 0 },
 };
 
 const INVERSE_GATE = {
@@ -157,11 +166,89 @@ const INVERSE_GATE = {
   H: "H",
   S: "Sdg",
   T: "Tdg",
+  M: "M",
 };
+const P0 = [[c(1,0), c(0,0)], [c(0,0), c(0,0)]];
+const P1 = [[c(0,0), c(0,0)], [c(0,0), c(1,0)]];
+
+function matMul2(A, B) {
+  const out = [
+    [c(0, 0), c(0, 0)],
+    [c(0, 0), c(0, 0)],
+  ];
+  for (let i = 0; i < 2; i++) {
+    for (let j = 0; j < 2; j++) {
+      out[i][j] = cAdd(
+        cmul(A[i][0], B[0][j]),
+        cmul(A[i][1], B[1][j])
+      );
+    }
+  }
+  return out;
+}
+
+function matAdjoint(M) {
+  return [
+    [cConj(M[0][0]), cConj(M[1][0])],
+    [cConj(M[0][1]), cConj(M[1][1])],
+  ];
+}
+
+function applyGateToRho(rho, U) {
+  const Udag = matAdjoint(U);
+  return matMul2(matMul2(U, rho), Udag);
+}
+
+function applyProjectorOn4(rho4, qubit, outcome) {
+  const proj = outcome === 0 ? P0 : P1;
+  const P = qubit === 0 ? tensor2(proj, ID2) : tensor2(ID2, proj);
+  const Pdag = mat4Adjoint(P);
+  return mat4Mul(mat4Mul(P, rho4), Pdag);
+}
+
+function scaleRho(rho, s) {
+  return rho.map((row) => row.map((z) => cScale(z, s)));
+}
+
+function addRho(a, b) {
+  return [
+    [cAdd(a[0][0], b[0][0]), cAdd(a[0][1], b[0][1])],
+    [cAdd(a[1][0], b[1][0]), cAdd(a[1][1], b[1][1])],
+  ];
+}
+
+function probsFromRho(rho) {
+  const p0 = Math.max(0, rho[0][0].re);
+  const p1 = Math.max(0, rho[1][1].re);
+  const s = p0 + p1;
+  if (s <= 0) return { p0: 0, p1: 0 };
+  return { p0: p0 / s, p1: p1 / s };
+}
+
+function applyCXApprox(controlState, targetState) {
+  const rhoC = densityFromState(controlState);
+  const rhoT = densityFromState(targetState);
+  const p1 = Math.max(0, Math.min(1, rhoC[1][1].re));
+  const p0 = Math.max(0, Math.min(1, 1 - p1));
+
+  const rhoT_X = applyGateToRho(rhoT, GATES.X.matrix);
+  const mixed = addRho(scaleRho(rhoT, p0), scaleRho(rhoT_X, p1));
+
+  targetState.rho = mixed;
+  delete targetState.alpha;
+  delete targetState.beta;
+  return targetState;
+}
 
 function applyGateToState(state, gateName) {
   const gate = GATES[gateName];
   if (!gate) return state;
+
+  // Density-aware path
+  if (state.rho) {
+    state.rho = applyGateToRho(state.rho, gate.matrix);
+    return state;
+  }
 
   const M = gate.matrix;
   const a = state.alpha;
@@ -371,15 +458,28 @@ class BlochSphereWidget {
     this.renderer.setSize(w, h);
   }
 
-  setStateAndTrace(state, traceVecs) {
+  setStateAndTrace(state, traceVecs, { hideArrow = false, hideTrace = false } = {}) {
     this.isAnimating = false;
     this._animResolve?.();
     this._animResolve = null;
+    this.forceHideArrow = !!hideArrow;
+    this.forceHideTrace = !!hideTrace;
 
-    this.state = normalizeState({
-      alpha: c(state.alpha.re, state.alpha.im),
-      beta: c(state.beta.re, state.beta.im),
-    });
+    if (state.rho) {
+      const pure = rhoToPureState(state.rho);
+      if (pure) {
+        this.state = normalizeState({ alpha: c(pure.alpha.re, pure.alpha.im), beta: c(pure.beta.re, pure.beta.im) });
+      } else {
+        this.state = {
+          rho: state.rho.map((row) => row.map((z) => ({ re: z.re, im: z.im }))),
+        };
+      }
+    } else {
+      this.state = normalizeState({
+        alpha: c(state.alpha.re, state.alpha.im),
+        beta: c(state.beta.re, state.beta.im),
+      });
+    }
 
     this.tracePoints = (traceVecs && traceVecs.length)
       ? traceVecs.map(v => new THREE.Vector3(v.x, v.y, v.z))
@@ -397,8 +497,10 @@ class BlochSphereWidget {
       const before = getBlochVectorFromState(this.state);
       const beforeV = new THREE.Vector3(before.x, before.y, before.z);
       applyGateToState(this.state, gateName);
-      const axis = new THREE.Vector3(gate.axis.x, gate.axis.y, gate.axis.z).normalize();
-      this._addGateArc(beforeV, axis, gate.angle);
+      if (!this.state.rho) {
+        const axis = new THREE.Vector3(gate.axis.x, gate.axis.y, gate.axis.z).normalize();
+        this._addGateArc(beforeV, axis, gate.angle);
+      }
       this._redrawFromState(false);
       return Promise.resolve();
     }
@@ -410,6 +512,12 @@ class BlochSphereWidget {
       const beforeV = new THREE.Vector3(before.x, before.y, before.z);
 
       applyGateToState(this.state, gateName);
+
+      if (this.state.rho) {
+        this._redrawFromState(true);
+        resolve();
+        return;
+      }
 
       const axis = new THREE.Vector3(gate.axis.x, gate.axis.y, gate.axis.z).normalize();
 
@@ -434,10 +542,25 @@ class BlochSphereWidget {
     const now = performance.now();
     const t = Math.min((now - this.animStart) / this.animDuration, 1);
     const theta = this.animAngle * t;
-    const current = this._rotateVectorAroundAxis(this.animFrom, this.animAxis, theta).normalize();
+    const current = this._rotateVectorAroundAxis(this.animFrom, this.animAxis, theta);
 
-    this.arrow.setDirection(current.clone().normalize());
-    this.point.position.copy(current);
+    const len = current.length();
+    const eps = 1e-4;
+    const dir = len > eps ? current.clone().normalize() : new THREE.Vector3(0, 0, 1);
+    const scaledLen = Math.max(0, Math.min(1, len));
+    this.arrow.setDirection(dir);
+    this.arrow.setLength(Math.max(0.08, scaledLen), 0.12, 0.06);
+    const opacity = Math.max(0.2, Math.min(1, len));
+    const visible = len > eps;
+    if (this.arrow.line && this.arrow.line.material) {
+      this.arrow.line.material.transparent = true;
+      this.arrow.line.material.opacity = visible ? opacity : 0;
+    }
+    if (this.arrow.cone && this.arrow.cone.material) {
+      this.arrow.cone.material.transparent = true;
+      this.arrow.cone.material.opacity = visible ? opacity : 0;
+    }
+    this.point.position.copy(visible ? current : new THREE.Vector3(0, 0, 0));
 
     this.tracePoints.push(current.clone());
     if (this.tracePoints.length > this.MAX_TRACE) this.tracePoints.shift();
@@ -455,12 +578,32 @@ class BlochSphereWidget {
   _redrawFromState(resetTrace = false) {
     const v = getBlochVectorFromState(this.state);
     const vec = new THREE.Vector3(v.x, v.y, v.z);
-    this.arrow.setDirection(vec.clone().normalize());
-    this.point.position.copy(vec);
+    const len = vec.length();
+    const eps = 1e-4;
+    const dir = len > eps ? vec.clone().normalize() : new THREE.Vector3(0, 0, 1);
+    const scaledLen = Math.max(0, Math.min(1, len));
+    this.arrow.setDirection(dir);
+    this.arrow.setLength(Math.max(0.08, scaledLen), 0.12, 0.06);
+    const opacity = Math.max(0.2, Math.min(1, len));
+    const visible = len > eps && !this.forceHideArrow;
+    if (this.arrow.line && this.arrow.line.material) {
+      this.arrow.line.material.transparent = true;
+      this.arrow.line.material.opacity = visible ? opacity : 0;
+    }
+    if (this.arrow.cone && this.arrow.cone.material) {
+      this.arrow.cone.material.transparent = true;
+      this.arrow.cone.material.opacity = visible ? opacity : 0;
+    }
+    this.point.position.copy(visible ? vec : new THREE.Vector3(0, 0, 0));
 
     if (resetTrace) {
       this.tracePoints = [vec.clone()];
       this._rebuildTraceGeometry();
+    }
+
+    if (this.traceLine?.material) {
+      this.traceLine.visible = !this.forceHideTrace;
+      this.traceLine.material.opacity = this.forceHideTrace ? 0 : this.traceLine.material.opacity;
     }
   }
 
@@ -497,9 +640,15 @@ class BlochSphereWidget {
 
 // -------------------- App state --------------------
 const MAX_QUBITS = 10;
-let qubitCount = 1;
+let qubitCount = 2;
 let selectedQubit = 0;
 let widgets = [];
+let initialStates = [];
+let latestGlobalRho = null;
+let measurementOverrideRho = null;
+let measurementOutcomes = []; // [step][qubit] => 0/1/null
+let measuredVisualOutcomes = []; // per-qubit latest measured result (manual or gate collapse)
+const PURITY_EPS = 1e-6;
 
 // -------------------- Bloch layout --------------------
 function rebuildBlochGrid() {
@@ -521,11 +670,30 @@ function rebuildBlochGrid() {
     const header = document.createElement("div");
     header.className = "bloch-tile-header";
     header.textContent = `Qubit q${i}`;
+    const selPill = document.createElement("span");
+    selPill.className = "selection-pill";
+    selPill.textContent = "Selected";
+    header.appendChild(selPill);
     tile.appendChild(header);
 
     const mount = document.createElement("div");
     mount.className = "tile-canvas";
     tile.appendChild(mount);
+
+    const purity = document.createElement("div");
+    purity.className = "purity-chip";
+    purity.textContent = "ρ purity: 1.00";
+    tile.appendChild(purity);
+
+    const meas = document.createElement("div");
+    meas.className = "measurement-badge";
+    meas.textContent = "";
+    tile.appendChild(meas);
+
+    const stateChip = document.createElement("div");
+    stateChip.className = "state-chip";
+    stateChip.textContent = "";
+    tile.appendChild(stateChip);
 
     tile.addEventListener("click", () => {
       selectedQubit = i;
@@ -543,7 +711,7 @@ function rebuildBlochGrid() {
     ro.observe(mount);
     ro.observe(tile);
 
-    widgets.push({ tileEl: tile, mountEl: mount, widget, ro });
+    widgets.push({ tileEl: tile, mountEl: mount, widget, ro, purityEl: purity, measEl: meas, stateChipEl: stateChip });
   }
 
   refreshSelectedUI();
@@ -643,7 +811,7 @@ let singleQ = [];
 let multiQ = [];
 let pendingCX = null;
 
-const PALETTE_GATES = ["H", "X", "Y", "Z", "S", "T", "CX", "CLEAR"];
+const PALETTE_GATES = ["H", "X", "Y", "Z", "S", "T", "CX", "M", "CLEAR"];
 
 let draggingGate = null;
 let draggingFrom = null;
@@ -653,11 +821,18 @@ function initCircuitModel() {
   singleQ = Array.from({ length: qubitCount }, () => Array(stepCount).fill(null));
   multiQ = Array.from({ length: stepCount }, () => []);
   pendingCX = null;
+  ensureInitialStates();
+  measurementOverrideRho = null;
+  latestGlobalRho = null;
+  measurementOutcomes = Array.from({ length: stepCount }, () => Array(qubitCount).fill(null));
+  measuredVisualOutcomes = Array.from({ length: qubitCount }, () => null);
   updateSelectionState();
 }
 
 function ensureCircuitDimensions() {
   if (!singleQ.length || !multiQ.length) initCircuitModel();
+  ensureInitialStates();
+  measurementOverrideRho = null;
 
   if (singleQ.length !== qubitCount) {
     const newSingle = Array.from({ length: qubitCount }, (_, q) => {
@@ -677,6 +852,21 @@ function ensureCircuitDimensions() {
     const old = multiQ;
     multiQ = Array.from({ length: stepCount }, (_, s) => (old[s] ? [...old[s]] : []));
   }
+
+  if (!measurementOutcomes.length) {
+    measurementOutcomes = Array.from({ length: stepCount }, () => Array(qubitCount).fill(null));
+  } else {
+    if (measurementOutcomes.length !== stepCount) {
+      const old = measurementOutcomes;
+      measurementOutcomes = Array.from({ length: stepCount }, (_, s) => old[s] ? [...old[s]].slice(0, qubitCount) : Array(qubitCount).fill(null));
+    }
+    measurementOutcomes = measurementOutcomes.map((row) => {
+      if (row.length === qubitCount) return row;
+      if (row.length < qubitCount) return row.concat(Array(qubitCount - row.length).fill(null));
+      return row.slice(0, qubitCount);
+    });
+  }
+  measuredVisualOutcomes = Array.from({ length: qubitCount }, (_, i) => measuredVisualOutcomes[i] ?? null);
 
   for (let s = 0; s < stepCount; s++) {
     multiQ[s] = multiQ[s].filter(
@@ -709,12 +899,14 @@ function gateColorClass(g) {
   if (g === "H") return "gate-h";
   if (g === "S" || g === "Sdg") return "gate-s";
   if (g === "T" || g === "Tdg") return "gate-t";
+  if (g === "M") return "gate-m";
   return "";
 }
 
 function clearAt(q, s) {
   singleQ[q][s] = null;
   multiQ[s] = multiQ[s].filter((op) => !(op.type === "CX" && (op.control === q || op.target === q)));
+  if (measurementOutcomes[s]) measurementOutcomes[s][q] = null;
 }
 
 function placeSingleGate(q, s, gate) {
@@ -722,6 +914,7 @@ function placeSingleGate(q, s, gate) {
   if (!GATES[gate]) return;
   singleQ[q][s] = gate;
   multiQ[s] = multiQ[s].filter((op) => !(op.type === "CX" && (op.control === q || op.target === q)));
+  if (measurementOutcomes[s]) measurementOutcomes[s][q] = null;
 }
 
 function placeCX(q, s) {
@@ -761,6 +954,78 @@ function placeCXDirect(step, control, target) {
   multiQ[step].push({ type: "CX", control, target });
 }
 
+function circuitIsEmpty() {
+  const noSingles = singleQ.every((row) => row.every((cell) => !cell));
+  const noMulti = multiQ.every((ops) => ops.length === 0);
+  return noSingles && noMulti;
+}
+
+function seedReferenceCircuit() {
+  if (!circuitIsEmpty()) return;
+  qubitCount = Math.max(qubitCount, 2);
+  ensureCircuitDimensions();
+  placeSingleGate(0, 1, "H");
+  placeCXDirect(3, 0, 1);
+  placeSingleGate(0, 5, "M");
+}
+
+function ensureInitialStates() {
+  initialStates = Array.from({ length: qubitCount }, (_, idx) => initialStates[idx] ?? "0");
+}
+
+function setInitialStateForQubit(q, state) {
+  if (q < 0 || q >= qubitCount) return;
+  const s = state === "1" ? "1" : "0";
+  initialStates[q] = s;
+  renderCircuit();
+  rebuildToStep(activeStep);
+}
+
+function getInitialState(q) {
+  const s = initialStates[q] === "1" ? "1" : "0";
+  return s === "1" ? { alpha: c(0, 0), beta: c(1, 0) } : { alpha: c(1, 0), beta: c(0, 0) };
+}
+
+let initStateMenuEl = null;
+
+function ensureInitStateMenu() {
+  if (initStateMenuEl) return initStateMenuEl;
+  const menu = document.createElement("div");
+  menu.id = "initStateMenu";
+  menu.innerHTML = `
+    <div class="init-title">Initial state</div>
+    <div class="init-options">
+      <button type="button" data-state="0">|0⟩</button>
+      <button type="button" data-state="1">|1⟩</button>
+    </div>
+  `;
+  menu.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-state]");
+    if (!btn) return;
+    const q = Number(menu.dataset.q ?? -1);
+    setInitialStateForQubit(q, btn.dataset.state);
+    hideInitStateMenu();
+  });
+  document.body.appendChild(menu);
+  initStateMenuEl = menu;
+  return menu;
+}
+
+function showInitStateMenu(q, anchorEl) {
+  const menu = ensureInitStateMenu();
+  const rect = anchorEl.getBoundingClientRect();
+  menu.dataset.q = String(q);
+  menu.style.left = `${rect.left + window.scrollX}px`;
+  menu.style.top = `${rect.bottom + 6 + window.scrollY}px`;
+  menu.classList.add("on");
+}
+
+function hideInitStateMenu() {
+  if (!initStateMenuEl) return;
+  initStateMenuEl.classList.remove("on");
+  initStateMenuEl.dataset.q = "";
+}
+
 // -------------------- Gate matrix LaTeX (used for hover preview) --------------------
 function gateMatrixLatex(g) {
   const gate = GATES[g];
@@ -788,19 +1053,258 @@ ${f(matrix[1][0])} & ${f(matrix[1][1])}
 }
 
 function densityMatrix(state) {
-  const a = state.alpha;
-  const b = state.beta;
-  const aConj = cConj(a);
-  const bConj = cConj(b);
-  return [
-    [cmul(a, aConj), cmul(a, bConj)],
-    [cmul(aConj, b), cmul(b, bConj)],
+  return densityFromState(state);
+}
+
+// -------------------- Two-qubit helpers --------------------
+const PAULI_X = [[c(0,0), c(1,0)], [c(1,0), c(0,0)]];
+const PAULI_Y = [[c(0,0), c(0,-1)], [c(0,1), c(0,0)]];
+const PAULI_Z = [[c(1,0), c(0,0)], [c(0,0), c(-1,0)]];
+const ID2 = [[c(1,0), c(0,0)], [c(0,0), c(1,0)]];
+
+function tensor2(A, B) {
+  // 2x2 ⊗ 2x2 => 4x4
+  const out = Array.from({ length: 4 }, () => Array(4).fill(c(0,0)));
+  for (let i = 0; i < 2; i++) {
+    for (let j = 0; j < 2; j++) {
+      for (let k = 0; k < 2; k++) {
+        for (let l = 0; l < 2; l++) {
+          const idxRow = i * 2 + k;
+          const idxCol = j * 2 + l;
+          out[idxRow][idxCol] = cmul(A[i][j], B[k][l]);
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function mat4Mul(A, B) {
+  const out = Array.from({ length: 4 }, () => Array(4).fill(c(0,0)));
+  for (let i = 0; i < 4; i++) {
+    for (let j = 0; j < 4; j++) {
+      let sum = c(0,0);
+      for (let k = 0; k < 4; k++) {
+        sum = cAdd(sum, cmul(A[i][k], B[k][j]));
+      }
+      out[i][j] = sum;
+    }
+  }
+  return out;
+}
+
+function mat4Adjoint(M) {
+  const out = Array.from({ length: 4 }, () => Array(4).fill(c(0,0)));
+  for (let i = 0; i < 4; i++) {
+    for (let j = 0; j < 4; j++) {
+      out[i][j] = cConj(M[j][i]);
+    }
+  }
+  return out;
+}
+
+function apply4Unitary(rho, U) {
+  const Udag = mat4Adjoint(U);
+  return mat4Mul(mat4Mul(U, rho), Udag);
+}
+
+function buildProductRho2(q0, q1) {
+  const a = q0.alpha, b = q0.beta;
+  const c0 = q1.alpha, d = q1.beta;
+  const psi = [
+    cmul(a, c0), // |00>
+    cmul(a, d),  // |01>
+    cmul(b, c0), // |10>
+    cmul(b, d),  // |11>
   ];
+  const rho = Array.from({ length: 4 }, () => Array(4).fill(c(0,0)));
+  for (let i = 0; i < 4; i++) {
+    for (let j = 0; j < 4; j++) {
+      rho[i][j] = cmul(psi[i], cConj(psi[j]));
+    }
+  }
+  return rho;
+}
+
+function singleOn4(U, qubit) {
+  return qubit === 0 ? tensor2(U, ID2) : tensor2(ID2, U);
+}
+
+const CX4 = [
+  [c(1,0), c(0,0), c(0,0), c(0,0)],
+  [c(0,0), c(1,0), c(0,0), c(0,0)],
+  [c(0,0), c(0,0), c(0,0), c(1,0)],
+  [c(0,0), c(0,0), c(1,0), c(0,0)],
+];
+
+function partialTraceQubit(rho4, tracedQubit) {
+  // returns 2x2
+  const out = [
+    [c(0,0), c(0,0)],
+    [c(0,0), c(0,0)],
+  ];
+  for (let i = 0; i < 2; i++) {
+    for (let j = 0; j < 2; j++) {
+      let sum = c(0,0);
+      for (let k = 0; k < 2; k++) {
+        const row = tracedQubit === 0 ? k * 2 + i : i * 2 + k;
+        const col = tracedQubit === 0 ? k * 2 + j : j * 2 + k;
+        sum = cAdd(sum, rho4[row][col]);
+      }
+      out[i][j] = sum;
+    }
+  }
+  return out;
+}
+
+function trace2MatSquared(rho) {
+  let acc = 0;
+  for (let i = 0; i < 2; i++) {
+    for (let j = 0; j < 2; j++) {
+      const term = cmul(rho[i][j], rho[j][i]);
+      acc += term.re;
+    }
+  }
+  return acc;
+}
+
+function rhoToPureState(rho, eps = 1e-6) {
+  const purity = trace2MatSquared(rho);
+  if (purity < 1 - eps) return null;
+  const rho00 = Math.max(0, rho[0][0].re);
+  const rho11 = Math.max(0, rho[1][1].re);
+  const rho01 = rho[0][1];
+  const aMag = Math.sqrt(rho00);
+  let alpha = c(aMag, 0);
+  let beta = c(0, 0);
+  if (aMag > 1e-6) {
+    const bConj = cScale(rho01, 1 / aMag); // rho01 = a b*
+    beta = cConj(bConj);
+  } else {
+    beta = c(Math.sqrt(rho11), 0);
+  }
+  return normalizeState({ alpha, beta });
+}
+
+function blochFromRho(rho) {
+  const rx = rho[0][1].re + rho[1][0].re;
+  const ry = BLOCH_Y_SIGN * (rho[0][1].im - rho[1][0].im);
+  const rz = rho[0][0].re - rho[1][1].re;
+  return { x: rx, y: ry, z: rz };
+}
+
+function expectationPauliPair(rho4, A, B) {
+  const op = tensor2(A, B);
+  let acc = 0;
+  for (let i = 0; i < 4; i++) {
+    for (let j = 0; j < 4; j++) {
+      const term = cmul(rho4[i][j], op[j][i]);
+      acc += term.re;
+    }
+  }
+  return acc;
+}
+
+function isEntangledFromRho(rho4, eps = 1e-6) {
+  const rhoA = partialTraceQubit(rho4, 1);
+  const rhoB = partialTraceQubit(rho4, 0);
+  const purityA = trace2MatSquared(rhoA);
+  const purityB = trace2MatSquared(rhoB);
+  return purityA < 1 - eps && purityB < 1 - eps ? true : (purityA < 1 - eps || purityB < 1 - eps);
+}
+
+function computeBlochTraces(stepIdx) {
+  const q0Init = normalizeState(getInitialState(0));
+  const q1Init = normalizeState(getInitialState(1));
+  let rho4 = buildProductRho2(q0Init, q1Init);
+
+  const traces = Array.from({ length: qubitCount }, () => []);
+  const measuredLatest = Array.from({ length: qubitCount }, () => null);
+  const measuredEvents = [];
+  const pushVecs = () => {
+    const rhoA = partialTraceQubit(rho4, 1);
+    const rhoB = partialTraceQubit(rho4, 0);
+    const vA = blochFromRho(rhoA);
+    const vB = blochFromRho(rhoB);
+    traces[0]?.push(vA);
+    traces[1]?.push(vB);
+  };
+  pushVecs();
+
+  if (stepIdx >= 0) {
+    for (let s = 0; s <= stepIdx; s++) {
+      for (let q = 0; q < Math.min(qubitCount, 2); q++) {
+        const g = singleQ[q]?.[s];
+        if (g && GATES[g]) {
+          if (g === "M") {
+            // Measure qubit q in Z basis; always resample from current probabilities.
+            const probs = measureProbabilities(rho4, q);
+            const total = Math.max(0, probs.p0 + probs.p1) || 1;
+            const r = Math.random();
+            const outcome = (r < probs.p0 / total) ? 0 : 1;
+            const { rho: collapsed } = collapseOnOutcome(rho4, q, outcome);
+            rho4 = collapsed;
+            measuredLatest[q] = outcome;
+            measuredEvents.push({ qubit: q, outcome });
+            pushVecs();
+            continue;
+          }
+
+          const U = GATES[g].matrix;
+          const beforeRho = partialTraceQubit(rho4, q === 0 ? 1 : 0);
+          const beforeV = blochFromRho(beforeRho);
+          const U4 = singleOn4(U, q);
+          rho4 = apply4Unitary(rho4, U4);
+          const afterRho = partialTraceQubit(rho4, q === 0 ? 1 : 0);
+          const afterV = blochFromRho(afterRho);
+
+          const axis = new THREE.Vector3(GATES[g].axis.x, GATES[g].axis.y, GATES[g].axis.z).normalize();
+          const beforeVec = new THREE.Vector3(beforeV.x, beforeV.y, beforeV.z);
+          const steps = 36;
+          for (let i = 1; i <= steps; i++) {
+            const t = i / steps;
+            const theta = GATES[g].angle * t;
+            const vt = rotateVectorAroundAxis(beforeVec, axis, theta);
+            if (q === 0) traces[0]?.push({ x: vt.x, y: vt.y, z: vt.z });
+            if (q === 1) traces[1]?.push({ x: vt.x, y: vt.y, z: vt.z });
+          }
+        }
+      }
+      for (const op of multiQ[s]) {
+        if (op.type === "CX" && op.control < 2 && op.target < 2) {
+          rho4 = apply4Unitary(rho4, CX4);
+          pushVecs();
+        }
+      }
+    }
+  }
+
+  const states = Array.from({ length: qubitCount }, (_, idx) => {
+    if (idx === 0) {
+      const rhoA = partialTraceQubit(rho4, 1);
+      const pure = rhoToPureState(rhoA);
+      return pure || { rho: rhoA };
+    }
+    if (idx === 1) {
+      const rhoB = partialTraceQubit(rho4, 0);
+      const pure = rhoToPureState(rhoB);
+      return pure || { rho: rhoB };
+    }
+    return normalizeState(getInitialState(idx));
+  });
+
+  return { states, traces, rho2: rho4, measuredEvents, measuredLatest };
 }
 
 function updateGateHoverMath(gateName) {
   const el = $("gateHoverMath");
   if (!el) return;
+
+  if (gateName === "M") {
+    el.innerHTML = `\\[\\text{Measurement symbol (visual only; no collapse).}\\]`;
+    if (typeof MathJax !== "undefined") MathJax.typesetPromise([el]);
+    return;
+  }
 
   if (!gateName || !GATES[gateName] || gateName === "CX" || gateName === "CLEAR") {
     el.innerHTML = `\\[\\text{Hover a 1-qubit gate to preview its matrix.}\\]`;
@@ -826,7 +1330,16 @@ function renderGatePalette() {
 
     const box = document.createElement("div");
     box.className = "gate-box " + gateColorClass(g);
-    box.textContent = g === "CLEAR" ? "🧽" : g;
+    if (g === "CLEAR") {
+      box.textContent = "🧽";
+    } else if (g === "M") {
+      box.classList.add("gate-measure");
+      const mIcon = document.createElement("div");
+      mIcon.className = "measure-icon";
+      box.appendChild(mIcon);
+    } else {
+      box.textContent = g;
+    }
 
     item.appendChild(box);
 
@@ -939,47 +1452,41 @@ function rotateVectorAroundAxis(vec, axis, angle) {
 }
 
 function rebuildToStep(stepIdx) {
-  const states = Array.from({ length: qubitCount }, () => normalizeState({ alpha: c(1,0), beta: c(0,0) }));
-  const traces = Array.from({ length: qubitCount }, () => []);
+  measurementOverrideRho = null;
 
-  for (let q = 0; q < qubitCount; q++) {
-    const v0 = getBlochVectorFromState(states[q]);
-    traces[q].push({ x: v0.x, y: v0.y, z: v0.z });
-  }
+  measuredVisualOutcomes = Array.from({ length: qubitCount }, () => null);
 
-  if (stepIdx >= 0) {
-    for (let s = 0; s <= stepIdx; s++) {
-      for (let q = 0; q < qubitCount; q++) {
-        const g = singleQ[q]?.[s];
-        if (g && GATES[g]) {
-          const gate = GATES[g];
-          const axis = new THREE.Vector3(gate.axis.x, gate.axis.y, gate.axis.z).normalize();
-          const before = getBlochVectorFromState(states[q]);
-          const beforeV = new THREE.Vector3(before.x, before.y, before.z).normalize();
-
-          applyGateToState(states[q], g);
-
-          const steps = 36;
-          for (let i = 1; i <= steps; i++) {
-            const t = i / steps;
-            const theta = gate.angle * t;
-            const vt = rotateVectorAroundAxis(beforeV, axis, theta).normalize();
-            traces[q].push({ x: vt.x, y: vt.y, z: vt.z });
-          }
-        }
-      }
-      // CX ignored for Bloch stepping (existing behavior)
-    }
-  }
+  const { states, traces, rho2, measuredEvents, measuredLatest } = computeBlochTraces(stepIdx);
+  latestGlobalRho = rho2;
+  const entangledNow = !!rho2 && isEntangledFromRho(rho2);
 
   for (let q = 0; q < qubitCount; q++) {
     const w = widgets[q]?.widget;
     if (!w) continue;
-    w.setStateAndTrace(states[q], traces[q]);
+    const state = states[q] ?? normalizeState(getInitialState(q));
+    const trace = traces[q] ?? [];
+    const hideArrow = entangledNow && measuredVisualOutcomes[q] == null && q < 2;
+    const hideTrace = hideArrow;
+    w.setStateAndTrace(state, trace, { hideArrow, hideTrace });
+    const rho = densityFromState(state);
+    const purity = trace2MatSquared(rho);
+    updatePurityChip(widgets[q]?.purityEl, purity);
+    const m = measuredLatest?.[q] ?? null;
+    applyMeasurementVisual(q, m, { cue: false });
+    updateStateChip(q, state, rho2);
   }
 
+  updateEntanglementIndicators(rho2);
   updateProbPopover();
   updateBackendMath();
+  updateCorrelationsPanel();
+  updateGlobalStateBadges();
+
+  // cue the most recent measurement events (if any) to emphasize collapse
+  measuredEvents?.forEach(({ qubit, outcome }) => {
+    cueMeasurement(qubit);
+    applyMeasurementVisual(qubit, outcome, { cue: false, snap: true });
+  });
 }
 
 function stopPlayback() {
@@ -1069,8 +1576,7 @@ async function stepForward() {
 
   activeStep = clamp(next, -1, stepCount - 1);
   updateActiveStepUI();
-  updateProbPopover();
-  updateBackendMath();
+  rebuildToStep(activeStep);
 
   stepBusy = false;
 }
@@ -1117,12 +1623,21 @@ function renderCircuit() {
     label.className = "cwire-label";
     label.style.top = `${y - 12}px`;
     label.textContent = `q${q}`;
+    label.addEventListener("click", (e) => {
+      e.stopPropagation();
+      showInitStateMenu(q, label);
+    });
     canvas.appendChild(label);
 
     const ket = document.createElement("div");
     ket.className = "cwire-ket";
     ket.style.top = `${y + 8}px`;
-    ket.innerHTML = q === 0 ? `\\(|0\\rangle\\)` : "";
+    ket.innerHTML = initialStates[q] === "1" ? `\\(|1\\rangle\\)` : `\\(|0\\rangle\\)`;
+    ket.dataset.q = String(q);
+    ket.addEventListener("click", (e) => {
+      e.stopPropagation();
+      showInitStateMenu(q, ket);
+    });
     canvas.appendChild(ket);
   }
 
@@ -1148,8 +1663,8 @@ function renderCircuit() {
     line.setAttribute("x2", C_LABEL_W + stepCount * C_STEP_W);
     line.setAttribute("y1", y);
     line.setAttribute("y2", y);
-    line.setAttribute("stroke", "rgba(245,245,245,0.20)");
-    line.setAttribute("stroke-width", "2");
+    line.setAttribute("stroke", "var(--circuit-wire)");
+    line.setAttribute("stroke-width", "3");
     line.setAttribute("stroke-linecap", "round");
     svg.appendChild(line);
   }
@@ -1166,8 +1681,8 @@ function renderCircuit() {
       vline.setAttribute("x2", x);
       vline.setAttribute("y1", y1);
       vline.setAttribute("y2", y2);
-      vline.setAttribute("stroke", "rgba(245,245,245,0.88)");
-      vline.setAttribute("stroke-width", "2");
+      vline.setAttribute("stroke", "var(--circuit-wire)");
+      vline.setAttribute("stroke-width", "2.2");
       vline.setAttribute("stroke-linecap", "round");
       svg.appendChild(vline);
     }
@@ -1186,9 +1701,17 @@ function renderCircuit() {
 
       const gate = document.createElement("div");
       gate.className = `cgate ${gateColorClass(g)}`;
+      gate.dataset.gate = g;
       gate.style.left = `${x - 21}px`;
       gate.style.top = `${y - 21}px`;
-      gate.textContent = g;
+      if (g === "M") {
+        gate.classList.add("cgate-measure");
+        const icon = document.createElement("div");
+        icon.className = "measure-icon";
+        gate.appendChild(icon);
+      } else {
+        gate.textContent = g;
+      }
       gate.setAttribute("draggable", "true");
 
       gate.addEventListener("dragstart", (e) => {
@@ -1235,7 +1758,8 @@ function renderCircuit() {
       {
         const y = wireCenterY(op.control);
         const g = document.createElement("div");
-        g.className = "cgate";
+        g.className = "cgate cx-node";
+        g.dataset.gate = "CX";
         g.style.left = `${x - 21}px`;
         g.style.top = `${y - 21}px`;
 
@@ -1275,7 +1799,8 @@ function renderCircuit() {
       {
         const y = wireCenterY(op.target);
         const g = document.createElement("div");
-        g.className = "cgate";
+        g.className = "cgate cx-node";
+        g.dataset.gate = "CX";
         g.style.left = `${x - 21}px`;
         g.style.top = `${y - 21}px`;
 
@@ -1414,6 +1939,7 @@ function setQubitCount(n) {
   if (selectedQubit >= qubitCount) selectedQubit = qubitCount - 1;
 
   ensureCircuitDimensions();
+  ensureInitialStates();
   rebuildBlochGrid();
   renderCircuit();
 
@@ -1539,6 +2065,7 @@ function initGateLibraryDrag() {
   let currentPos = applyGateLibPosition(savedPos);
 
   let start = null;
+  let activePointerId = null;
 
   const startDrag = (ev) => {
     if (ev.button !== 0) return;
@@ -1553,6 +2080,7 @@ function initGateLibraryDrag() {
       width: rect.width,
       height: rect.height,
     };
+    activePointerId = ev.pointerId;
     panel.setPointerCapture?.(ev.pointerId);
     ev.preventDefault();
   };
@@ -1574,6 +2102,10 @@ function initGateLibraryDrag() {
   const endDrag = () => {
     if (!start) return;
     try { localStorage.setItem(GATELIB_POS_KEY, JSON.stringify(currentPos)); } catch {}
+    if (activePointerId != null) {
+      panel.releasePointerCapture?.(activePointerId);
+    }
+    activePointerId = null;
     start = null;
   };
 
@@ -1581,6 +2113,8 @@ function initGateLibraryDrag() {
   panel.addEventListener("pointermove", moveDrag);
   panel.addEventListener("pointerup", endDrag);
   panel.addEventListener("pointercancel", endDrag);
+  panel.addEventListener("pointerleave", endDrag);
+  window.addEventListener("pointerup", endDrag, { passive: true });
 
   window.addEventListener("resize", () => {
     currentPos = applyGateLibPosition(currentPos);
@@ -1601,6 +2135,82 @@ function formatProbabilityLatex(p) {
   return fracLatex(frac);
 }
 
+function formatStateKet(alpha, beta, tol = 1e-6) {
+  const isZero = (z) => Math.abs(z.re) < tol && Math.abs(z.im) < tol;
+  const isOne = (z) => Math.abs(z.re - 1) < tol && Math.abs(z.im) < tol;
+  const isNegOne = (z) => Math.abs(z.re + 1) < tol && Math.abs(z.im) < tol;
+
+  const term = (z, basis) => {
+    if (isZero(z)) return null;
+    if (isOne(z)) return `|${basis}\\rangle`;
+    if (isNegOne(z)) return `-|${basis}\\rangle`;
+    return `${formatExactComplex(z, tol)}\\,|${basis}\\rangle`;
+  };
+
+  const terms = [term(alpha, "0"), term(beta, "1")].filter(Boolean);
+  if (!terms.length) return "0";
+
+  return terms
+    .map((t, idx) => {
+      if (idx === 0) return t;
+      if (t.startsWith("-")) return `- ${t.slice(1)}`;
+      return `+ ${t}`;
+    })
+    .join(" ");
+}
+
+function updatePurityChip(el, purity) {
+  if (!el) return;
+  const clamped = Math.max(0, Math.min(1, purity));
+  el.textContent = `ρ purity: ${clamped.toFixed(2)}`;
+  el.style.setProperty("--purity", String(clamped));
+  const mixed = clamped < 1 - PURITY_EPS;
+  el.classList.toggle("mixed", mixed);
+  const tile = el.closest(".bloch-tile");
+  tile?.classList.toggle("mixed", mixed);
+}
+
+function cueMeasurement(q) {
+  const tile = widgets[q]?.tileEl;
+  if (!tile) return;
+  tile.classList.add("measure-cue");
+  setTimeout(() => tile.classList.remove("measure-cue"), 140);
+}
+
+function applyMeasurementVisual(q, outcome, { cue = false, snap = false } = {}) {
+  const entry = widgets[q];
+  if (!entry) return;
+  measuredVisualOutcomes[q] = outcome;
+  const { tileEl, measEl, widget, purityEl, stateChipEl } = entry;
+
+  if (outcome == null) {
+    tileEl?.classList.remove("measured");
+    measEl.textContent = "";
+    measEl.classList.remove("on");
+    return;
+  }
+
+  if (cue) cueMeasurement(q);
+  tileEl?.classList.remove("entangled", "mixed");
+  tileEl?.classList.add("measured");
+  measEl.textContent = `Measured: |${outcome}⟩`;
+  measEl.classList.add("on");
+  if (stateChipEl) {
+    stateChipEl.innerHTML = `\\(|\\psi_{${q}}\\rangle = |${outcome}\\rangle\\)`;
+    stateChipEl.classList.remove("entangled");
+    typesetNode(stateChipEl);
+  }
+
+  // Snap arrow to Z with full length if requested
+  if (snap && widget) {
+    const pure = outcome === 0
+      ? { alpha: c(1, 0), beta: c(0, 0) }
+      : { alpha: c(0, 0), beta: c(1, 0) };
+    widget.setStateAndTrace(normalizeState(pure), [{ x: 0, y: 0, z: outcome === 0 ? 1 : -1 }]);
+    updatePurityChip(purityEl, 1);
+  }
+}
+
 function updateProbPopover() {
   const host = $("probHistogram");
   if (!host) return;
@@ -1608,37 +2218,332 @@ function updateProbPopover() {
   const w = widgets[selectedQubit]?.widget;
   if (!w) return;
 
-  const p0 = cAbs2(w.state.alpha);
-  const p1 = cAbs2(w.state.beta);
-  const alpha = formatExactComplex(w.state.alpha);
-  const beta = formatExactComplex(w.state.beta);
+  const rho = densityFromState(w.state);
+  const { p0, p1 } = probsFromRho(rho);
 
   host.innerHTML = `
     <div class="bar prob-row">
       <div class="prob-state">|0⟩</div>
       <div class="bar-track"><div class="bar-fill" style="width:${Math.max(0, Math.min(1, p0)) * 100}%"></div></div>
-      <div class="prob-math">\\(\\Pr(|0\\rangle) = |\\alpha|^{2} = ${formatProbabilityLatex(p0)}\\)</div>
+      <div class="prob-math">\\(\\Pr(|0\\rangle) = ${formatProbabilityLatex(p0)}\\)</div>
     </div>
     <div class="bar prob-row">
       <div class="prob-state">|1⟩</div>
       <div class="bar-track"><div class="bar-fill" style="width:${Math.max(0, Math.min(1, p1)) * 100}%"></div></div>
-      <div class="prob-math">\\(\\Pr(|1\\rangle) = |\\beta|^{2} = ${formatProbabilityLatex(p1)}\\)</div>
+      <div class="prob-math">\\(\\Pr(|1\\rangle) = ${formatProbabilityLatex(p1)}\\)</div>
     </div>
-    <div class="prob-statevector">\\(|\\psi\\rangle = ${alpha}\\,|0\\rangle + ${beta}\\,|1\\rangle\\)</div>
   `;
 
   if (typeof MathJax !== "undefined") MathJax.typesetPromise([host]);
 }
 
+// -------------------- Entanglement + correlations --------------------
+function getCurrentRho4() {
+  return measurementOverrideRho || latestGlobalRho;
+}
+
+function measureProbabilities(rho4, qubit) {
+  const proj0 = qubit === 0 ? tensor2(P0, ID2) : tensor2(ID2, P0);
+  const proj1 = qubit === 0 ? tensor2(P1, ID2) : tensor2(ID2, P1);
+  let p0 = 0;
+  let p1 = 0;
+  for (let i = 0; i < 4; i++) {
+    for (let j = 0; j < 4; j++) {
+      p0 += cmul(proj0[i][j], rho4[j][i]).re;
+      p1 += cmul(proj1[i][j], rho4[j][i]).re;
+    }
+  }
+  return { p0: Math.max(0, p0), p1: Math.max(0, p1) };
+}
+
+function collapseOnOutcome(rho4, qubit, outcome) {
+  const probs = measureProbabilities(rho4, qubit);
+  const total = Math.max(0, probs.p0 + probs.p1);
+  const prob = outcome === 0 ? probs.p0 : probs.p1;
+  const proj = outcome === 0 ? P0 : P1;
+  const P = qubit === 0 ? tensor2(proj, ID2) : tensor2(ID2, proj);
+  const Pdag = mat4Adjoint(P);
+  let collapsed = mat4Mul(mat4Mul(P, rho4), Pdag);
+  if (prob > 0) collapsed = collapsed.map((row) => row.map((z) => cScale(z, 1 / prob)));
+  return { rho: collapsed, prob, outcome };
+}
+
+function updateCorrelationsPanel() {
+  const rho = getCurrentRho4();
+  const panel = $("correlationsPanel");
+  if (!panel) return;
+  if (!rho) {
+    panel.style.opacity = "0";
+    return;
+  }
+
+  const vals = {
+    XX: expectationPauliPair(rho, PAULI_X, PAULI_X),
+    YY: expectationPauliPair(rho, PAULI_Y, PAULI_Y),
+    ZZ: expectationPauliPair(rho, PAULI_Z, PAULI_Z),
+  };
+
+  ["XX", "YY", "ZZ"].forEach((k) => {
+    const bar = $(`corr${k}`);
+    const lab = $(`corr${k}Val`);
+    const v = Math.max(-1, Math.min(1, vals[k]));
+    if (bar) {
+      const width = Math.abs(v) * 100;
+      bar.style.width = `${width}%`;
+      bar.style.left = v >= 0 ? "50%" : `${50 - width}%`;
+    }
+    if (lab) lab.textContent = v.toFixed(2);
+  });
+}
+
+function updateEntanglementIndicators(rho4) {
+  const entangled = !!rho4 && isEntangledFromRho(rho4);
+  document.body.classList.toggle("entangled", entangled);
+  document.body.classList.toggle("corr-active", entangled);
+  widgets.forEach(({ tileEl }, idx) => {
+    const ent = entangled && idx < 2 && measuredVisualOutcomes[idx] == null;
+    tileEl.classList.toggle("entangled", ent);
+  });
+}
+
+function describeBellState(rho4, eps = 1e-3) {
+  // Checks overlap with Bell projectors.
+  const proj = {
+    phiPlus: [
+      [c(0.5,0), c(0,0), c(0,0), c(0.5,0)],
+      [c(0,0), c(0,0), c(0,0), c(0,0)],
+      [c(0,0), c(0,0), c(0,0), c(0,0)],
+      [c(0.5,0), c(0,0), c(0,0), c(0.5,0)],
+    ],
+    phiMinus: [
+      [c(0.5,0), c(0,0), c(0,0), c(-0.5,0)],
+      [c(0,0), c(0,0), c(0,0), c(0,0)],
+      [c(0,0), c(0,0), c(0,0), c(0,0)],
+      [c(-0.5,0), c(0,0), c(0,0), c(0.5,0)],
+    ],
+    psiPlus: [
+      [c(0,0), c(0,0), c(0,0), c(0,0)],
+      [c(0,0), c(0.5,0), c(0.5,0), c(0,0)],
+      [c(0,0), c(0.5,0), c(0.5,0), c(0,0)],
+      [c(0,0), c(0,0), c(0,0), c(0,0)],
+    ],
+    psiMinus: [
+      [c(0,0), c(0,0), c(0,0), c(0,0)],
+      [c(0,0), c(0.5,0), c(-0.5,0), c(0,0)],
+      [c(0,0), c(-0.5,0), c(0.5,0), c(0,0)],
+      [c(0,0), c(0,0), c(0,0), c(0,0)],
+    ],
+  };
+  const overlap = (P) => {
+    let s = 0;
+    for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) s += cmul(P[i][j], rho4[j][i]).re;
+    return s;
+  };
+  const scores = {
+    "Bell Φ+": overlap(proj.phiPlus),
+    "Bell Φ-": overlap(proj.phiMinus),
+    "Bell Ψ+": overlap(proj.psiPlus),
+    "Bell Ψ-": overlap(proj.psiMinus),
+  };
+  const best = Object.entries(scores).reduce((a, b) => (b[1] > a[1] ? b : a), ["", 0]);
+  return best[1] > 1 - eps ? best[0] : null;
+}
+
+function updateGlobalStateBadges() {
+  const rho = getCurrentRho4();
+  const entangled = !!rho && isEntangledFromRho(rho);
+  const bell = rho ? describeBellState(rho) : null;
+  widgets.forEach((w, idx) => {
+    const badge = w?.stateChipEl;
+    if (!badge) return;
+    if (measuredVisualOutcomes[idx] != null) {
+      // already handled by measurement visual
+      badge.classList.remove("entangled");
+      return;
+    }
+    if (entangled) {
+      if (bell) {
+        const bellLatex = bellToLatex(bell);
+        badge.innerHTML = `\\(${bellLatex}\\)`;
+      } else {
+        badge.innerHTML = `\\(\\text{Entangled state}\\)`;
+      }
+      badge.classList.add("on");
+      badge.classList.add("entangled");
+      typesetNode(badge);
+    }
+  });
+}
+
+function reducedStateDirac(rho) {
+  const { p0, p1 } = probsFromRho(rho);
+  const pseudoAlpha = { re: Math.sqrt(p0), im: 0 };
+  const pseudoBeta = { re: Math.sqrt(p1), im: 0 };
+  return formatStateKet(pseudoAlpha, pseudoBeta, 1e-6);
+}
+
+function formatDiracPlain(rho, qIdx = 0, eps = 1e-6) {
+  const pure = rhoToPureState(rho, eps);
+  const fmt = (z) => {
+    const re = Math.abs(z.re) < eps ? 0 : z.re;
+    const im = Math.abs(z.im) < eps ? 0 : z.im;
+    if (im === 0) return re.toFixed(2);
+    const sign = im >= 0 ? "+" : "-";
+    return `${re.toFixed(2)} ${sign} ${Math.abs(im).toFixed(2)}i`;
+  };
+  if (pure) {
+    return `|ψ_${qIdx}⟩ = ${fmt(pure.alpha)}|0⟩ + ${fmt(pure.beta)}|1⟩`;
+  }
+  // fallback: magnitudes from diagonal
+  const { p0, p1 } = probsFromRho(rho);
+  const a = Math.sqrt(Math.max(0, p0)).toFixed(2);
+  const b = Math.sqrt(Math.max(0, p1)).toFixed(2);
+  return `|ψ_${qIdx}⟩ = ${a}|0⟩ + ${b}|1⟩`;
+}
+
+function formatDiracLatex(rho, qIdx = 0, eps = 1e-6) {
+  const pure = rhoToPureState(rho, eps);
+  if (pure) {
+    const a = formatExactComplex(pure.alpha);
+    const b = formatExactComplex(pure.beta);
+    return `|\\psi_{${qIdx}}\\rangle = ${a}\\,|0\\rangle + ${b}\\,|1\\rangle`;
+  }
+  const { p0, p1 } = probsFromRho(rho);
+  const a = formatExactComplex({ re: Math.sqrt(Math.max(0, p0)), im: 0 });
+  const b = formatExactComplex({ re: Math.sqrt(Math.max(0, p1)), im: 0 });
+  return `|\\psi_{${qIdx}}\\rangle = ${a}\\,|0\\rangle + ${b}\\,|1\\rangle`;
+}
+
+function typesetNode(el) {
+  if (typeof MathJax === "undefined" || !el) return;
+  MathJax.typesetPromise([el]).catch(() => {});
+}
+
+function bellToLatex(label) {
+  if (label.includes("Φ+") || label.includes("Phi") || label.includes("phi")) return "|\\Phi^{+}\\rangle";
+  if (label.includes("Φ-") || label.includes("Phi-") || label.includes("phi-")) return "|\\Phi^{-}\\rangle";
+  if (label.includes("Ψ+") || label.includes("Psi") || label.includes("psi")) return "|\\Psi^{+}\\rangle";
+  if (label.includes("Ψ-") || label.includes("Psi-") || label.includes("psi-")) return "|\\Psi^{-}\\rangle";
+  return label;
+}
+
+function updateStateChip(q, state, globalRho4) {
+  const entry = widgets[q];
+  if (!entry) return;
+  const chip = entry.stateChipEl;
+  if (!chip) return;
+
+  const rho = densityFromState(state);
+  const diracLatex = formatDiracLatex(rho, q);
+
+  const entangled = !!globalRho4 && isEntangledFromRho(globalRho4);
+  const bell = globalRho4 ? describeBellState(globalRho4) : null;
+
+  const suffix = entangled && bell ? `\\quad(${bellToLatex(bell)})` : "";
+  chip.innerHTML = `\\(${diracLatex}${suffix}\\)`;
+  chip.classList.add("on");
+  chip.classList.toggle("entangled", entangled);
+  typesetNode(chip);
+}
+
+function showInspectPopover() {
+  const pop = $("inspectPopover");
+  if (!pop) return;
+  const rho = getCurrentRho4();
+  if (!rho) return;
+  const grid = $("inspectGrid");
+  if (grid) {
+    grid.innerHTML = "";
+    const maxVal = Math.max(...rho.flat().map((z) => Math.abs(z.re)), 1);
+    for (let i = 0; i < 4; i++) {
+      for (let j = 0; j < 4; j++) {
+        const z = rho[i][j];
+        const norm = Math.min(1, Math.abs(z.re) / maxVal);
+        const hue = z.re >= 0 ? 190 : 10;
+        const cell = document.createElement("div");
+        cell.className = "inspect-cell";
+        cell.style.background = `hsla(${hue},70%,70%,${0.2 + 0.6 * norm})`;
+        cell.textContent = z.re.toFixed(2);
+        grid.appendChild(cell);
+      }
+    }
+  }
+  pop.classList.add("on");
+}
+function closeInspectPopover() { $("inspectPopover")?.classList.remove("on"); }
+
+function computeBlochTracesFromRho(rho4) {
+  const traces = Array.from({ length: qubitCount }, () => []);
+  const rhoA = partialTraceQubit(rho4, 1);
+  const rhoB = partialTraceQubit(rho4, 0);
+  const vA = blochFromRho(rhoA);
+  const vB = blochFromRho(rhoB);
+  traces[0]?.push(vA);
+  traces[1]?.push(vB);
+  const states = Array.from({ length: qubitCount }, (_, idx) => {
+    if (idx === 0) {
+      const pure = rhoToPureState(rhoA);
+      return pure || { rho: rhoA };
+    }
+    if (idx === 1) {
+      const pure = rhoToPureState(rhoB);
+      return pure || { rho: rhoB };
+    }
+    return normalizeState(getInitialState(idx));
+  });
+  widgets.forEach((w, i) => {
+    const rho = i === 0 ? rhoA : (i === 1 ? rhoB : null);
+    if (rho) updatePurityChip(w?.purityEl, trace2MatSquared(rho));
+  });
+  return { states, traces };
+}
+
+function measureQubit(idx) {
+  const rho = getCurrentRho4();
+  if (!rho) return;
+  const probs = measureProbabilities(rho, idx);
+  const total = Math.max(0, probs.p0 + probs.p1) || 1;
+  const r = Math.random();
+  const outcome = r < probs.p0 / total ? 0 : 1;
+
+  const { rho: collapsed } = collapseOnOutcome(rho, idx, outcome);
+
+  measurementOverrideRho = collapsed;
+  latestGlobalRho = collapsed;
+  const { states, traces } = computeBlochTracesFromRho(collapsed);
+  for (let q = 0; q < qubitCount; q++) {
+    const w = widgets[q]?.widget;
+    if (!w) continue;
+    w.setStateAndTrace(states[q], traces[q], { hideArrow: false });
+    updateStateChip(q, states[q], collapsed);
+  }
+  applyMeasurementVisual(idx, outcome, { cue: true, snap: true });
+  updateEntanglementIndicators(collapsed);
+  updateCorrelationsPanel();
+  updateProbPopover();
+  updateBackendMath();
+  document.body.classList.add("measurement-flash");
+  setTimeout(() => document.body.classList.remove("measurement-flash"), 280);
+  showToast(`Measured q${idx} = ${outcome}`);
+}
+
+function showToast(msg) {
+  const t = $("toast");
+  if (!t) return;
+  t.textContent = msg;
+  t.classList.add("on");
+  setTimeout(() => t.classList.remove("on"), 1500);
+}
+
 // -------------------- Backend MathJax view --------------------
 function computeStateAtStep(stepIdx, q) {
-  const st = normalizeState({ alpha: c(1,0), beta: c(0,0) });
-  if (stepIdx < 0) return st;
-  for (let s = 0; s <= stepIdx; s++) {
-    const g = singleQ[q]?.[s];
-    if (g && GATES[g]) applyGateToState(st, g);
-  }
-  return st;
+  const states = computeStatesUpTo(stepIdx);
+  return states[q];
+}
+
+function computeStatesUpTo(stepIdx) {
+  const { states } = computeBlochTraces(stepIdx);
+  return states;
 }
 
 function updateBackendMath() {
@@ -1650,17 +2555,27 @@ function updateBackendMath() {
   document.body.classList.toggle("show-matrix", !!showMatrix);
 
   const g = (activeStep >= 0) ? singleQ[selectedQubit]?.[activeStep] : null;
+  const isMeasure = g === "M";
 
   const prevState = computeStateAtStep(activeStep - 1, selectedQubit);
   const curState  = computeStateAtStep(activeStep, selectedQubit);
 
-  const prevA = formatExactComplex(prevState.alpha, tol);
-  const prevB = formatExactComplex(prevState.beta, tol);
-  const curA  = formatExactComplex(curState.alpha, tol);
-  const curB  = formatExactComplex(curState.beta, tol);
+  const prevRho = densityFromState(prevState);
+  const curRho = densityFromState(curState);
+  const prevP0 = Math.max(0, prevRho[0][0].re);
+  const prevP1 = Math.max(0, prevRho[1][1].re);
+  const curP0 = Math.max(0, curRho[0][0].re);
+  const curP1 = Math.max(0, curRho[1][1].re);
 
-  const gateStr = g ? `\\text{Gate: } ${g}` : `\\text{Gate: } I`;
-  const updateStr = g ? `|\\psi_{t}\\rangle = ${g}\\,|\\psi_{t-1}\\rangle` : `|\\psi\\rangle = |0\\rangle`;
+  const prevA = formatExactComplex({ re: Math.sqrt(prevP0), im: 0 }, tol);
+  const prevB = formatExactComplex({ re: Math.sqrt(prevP1), im: 0 }, tol);
+  const curA  = formatExactComplex({ re: Math.sqrt(curP0), im: 0 }, tol);
+  const curB  = formatExactComplex({ re: Math.sqrt(curP1), im: 0 }, tol);
+
+  const gateStr = g ? `\\text{Gate: } ${isMeasure ? "\\text{Measure}" : g}` : `\\text{Gate: } I`;
+  const updateStr = g
+    ? (isMeasure ? `\\text{Measurement (visual only; state unchanged in this view)}` : `|\\psi_{t}\\rangle = ${g}\\,|\\psi_{t-1}\\rangle`)
+    : `|\\psi\\rangle = |0\\rangle`;
 
   const stateLine = g
     ? `\\[
@@ -1699,8 +2614,8 @@ ${curB}
   if (elNotes) elNotes.innerHTML = notesStr;
   if (elMat) {
     const gateLatex = gateMatrixLatex(g || "I");
-    const rhoLatex = matrixLatex(`\\rho_{${selectedQubit + 1}}`, densityMatrix(curState));
-    elMat.innerHTML = showMatrix ? gateLatex + rhoLatex : "";
+    const rhoLatex = matrixLatex(`\\rho_{${selectedQubit + 1}}`, curRho);
+    elMat.innerHTML = (showMatrix && !isMeasure) ? gateLatex + rhoLatex : "";
   }
 
   if (typeof MathJax !== "undefined") {
@@ -1757,6 +2672,7 @@ window.addEventListener("load", () => {
   applyStoredSplit();
 
   initCircuitModel();
+  seedReferenceCircuit();
   rebuildBlochGrid();
   renderCircuit();
   updateActiveStepUI();
@@ -1884,6 +2800,11 @@ window.addEventListener("load", () => {
     $(id)?.addEventListener("click", () => closeMenu());
   });
 
+  $("inspectRho")?.addEventListener("click", (e) => { e.stopPropagation(); showInspectPopover(); });
+  $("closeInspect")?.addEventListener("click", () => closeInspectPopover());
+  $("measureQ0")?.addEventListener("click", () => measureQubit(0));
+  $("measureQ1")?.addEventListener("click", () => measureQubit(1));
+
   // Backdrop closes overlays (drawer/prob/menu only)
   $("overlayBackdrop")?.addEventListener("click", () => closeAllOverlays());
 
@@ -1896,6 +2817,14 @@ window.addEventListener("load", () => {
     const prob = $("probPopover");
     const probBtn = $("openProbPopover");
     if (uiState.probOpen && prob && probBtn && !prob.contains(e.target) && !probBtn.contains(e.target)) closeProbPopover();
+
+    if (initStateMenuEl && !initStateMenuEl.contains(e.target)) {
+      hideInitStateMenu();
+    }
+
+    if (!inspectPopoverEl?.contains(e.target) && e.target !== $("inspectRho")) {
+      closeInspectPopover();
+    }
   });
 
   // Global hotkeys
