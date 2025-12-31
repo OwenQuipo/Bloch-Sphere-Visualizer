@@ -1,349 +1,249 @@
+<!-- index.html -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Qubit Bloch Sphere Visualizer</title>
+  <title>Qubit Visualizer</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
   <!-- MathJax for LaTeX rendering -->
   <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
 
-  <style>
-    html, body {
-      margin: 0;
-      padding: 0;
-      height: 100%;
-      width: 100%;
-      overflow: hidden;
-      background: #05060a;
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text",
-        "Segoe UI", sans-serif;
+  <!-- ESM import map for Three.js (works without a bundler) -->
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.161.0/build/three.module.js",
+        "three/examples/jsm/controls/OrbitControls.js": "https://unpkg.com/three@0.161.0/examples/jsm/controls/OrbitControls.js"
+      }
     }
+  </script>
 
-    #app {
-      position: relative;
-      width: 100vw;
-      height: 100vh;
-    }
-
-    /* Canvas */
-    #canvas-container {
-      position: absolute;
-      inset: 0;
-    }
-
-    /* Title Bar */
-    #title-bar {
-      position: absolute;
-      left: 20px;
-      top: 20px;
-      z-index: 10;
-      color: #e6e8ff;
-      font-size: 0.9rem;
-      opacity: 0.85;
-      letter-spacing: 0.08em;
-    }
-    #title-bar span {
-      display: block;
-      font-size: 0.7rem;
-      opacity: 0.8;
-    }
-
-    /* Right Control Panel */
-    #controls-panel {
-      position: absolute;
-      top: 20px;
-      right: 20px;
-      width: 300px; /* widened a bit */
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-      z-index: 10;
-      color: #f5f5f5;
-    }
-
-    .controls-section {
-      background: rgba(10, 12, 20, 0.92);
-      border-radius: 12px;
-      padding: 10px 12px;
-      border: 1px solid rgba(120, 130, 180, 0.4);
-      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
-      backdrop-filter: blur(8px);
-    }
-
-    .controls-header {
-      font-size: 0.85rem;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: #9da4ff;
-      margin-bottom: 8px;
-    }
-
-    /* Gate Buttons */
-
-    .gate-row {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      margin-bottom: 6px;
-    }
-
-    .gate-group-label {
-      width: 64px;
-      font-size: 0.7rem;
-      text-transform: uppercase;
-      color: #888fb5;
-    }
-
-    .gate-btn {
-      min-width: 34px;
-      padding: 6px 10px;
-      border-radius: 8px;
-      border: 1px solid rgba(180, 190, 255, 0.4);
-      background: radial-gradient(circle at 20% 0%, #262b3f, #171927);
-      color: #f7f7ff;
-      font-size: 0.8rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: 0.15s ease;
-    }
-    .gate-btn:hover {
-      transform: translateY(-1px);
-      border-color: rgba(220, 230, 255, 0.9);
-      box-shadow: 0 6px 18px rgba(0,0,0,0.6);
-    }
-
-    /* Gate Colors */
-    .gate-x { border-color: rgba(255, 111, 111, 0.8); }
-    .gate-y { border-color: rgba(111, 255, 171, 0.8); }
-    .gate-z { border-color: rgba(120, 181, 255, 0.8); }
-    .gate-h { border-color: rgba(199, 148, 255, 0.85); }
-    .gate-s { border-color: rgba(148, 233, 255, 0.85); }
-    .gate-t { border-color: rgba(255, 222, 145, 0.85); }
-
-    /* Secondary Buttons */
-
-    .controls-row {
-      display: flex;
-      gap: 8px;
-      margin-bottom: 8px;
-    }
-
-    .secondary-btn {
-      flex: 1;
-      padding: 6px 10px;
-      border-radius: 8px;
-      background: linear-gradient(135deg, #1b1f2b, #131623);
-      border: 1px solid rgba(110, 120, 160, 0.9);
-      color: #f5f5f5;
-      font-size: 0.78rem;
-      cursor: pointer;
-      transition: 0.15s ease;
-    }
-
-    .secondary-btn:hover {
-      transform: translateY(-1px);
-      background: #272b3a;
-    }
-
-    /* Toggle */
-
-    .toggle-label {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      cursor: pointer;
-      font-size: 0.78rem;
-      color: #d0d4ff;
-    }
-    .toggle-label input { display: none; }
-
-    .toggle-slider {
-      width: 36px;
-      height: 18px;
-      border-radius: 99px;
-      background: #30354a;
-      position: relative;
-      transition: background 0.2s;
-    }
-
-    .toggle-slider::before {
-      content: "";
-      position: absolute;
-      top: 2px;
-      left: 2px;
-      width: 14px;
-      height: 14px;
-      border-radius: 50%;
-      background: #f5f5ff;
-      transition: transform 0.2s;
-    }
-
-    .toggle-label input:checked + .toggle-slider {
-      background: #5a7bff;
-    }
-
-    .toggle-label input:checked + .toggle-slider::before {
-      transform: translateX(18px);
-    }
-
-    /* State Display */
-
-    .state-display-row {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-      margin-top: 6px;
-    }
-
-    .state-display,
-    .bloch-display {
-      font-family: "SF Mono", Menlo, monospace;
-      font-size: 0.7rem;
-      padding: 4px 6px;
-      border-radius: 6px;
-      background: rgba(10,12,20,0.9);
-      border: 1px solid rgba(90,100,150,0.6);
-      color: #e0e4ff;
-      min-height: 28px;
-
-      /* keep LaTeX inside the box */
-      overflow-x: auto;
-      white-space: nowrap;
-      box-sizing: border-box;
-      max-width: 100%;
-    }
-
-    /* Make MathJax containers behave inside the box */
-    .state-display mjx-container,
-    .bloch-display mjx-container {
-      max-width: 100%;
-    }
-
-    /* Tooltip */
-
-    #gate-tooltip {
-      position: fixed;
-      padding: 8px 12px;
-      max-width: 260px;
-      border-radius: 8px;
-      background: rgba(20, 22, 35, 0.95);
-      border: 1px solid rgba(120,130,180,0.5);
-      color: #e7e9ff;
-      backdrop-filter: blur(6px);
-      box-shadow: 0 8px 22px rgba(0,0,0,0.45);
-      opacity: 0;
-      pointer-events: none;
-      z-index: 9999;
-      transition: opacity 0.18s ease;
-    }
-  </style>
+  <link rel="stylesheet" href="./styles.css" />
 </head>
 
 <body>
-  <div id="app">
-    <div id="canvas-container"></div>
+  <div id="qubit-visualizer">
+    <!-- =========================
+         Topbar (always visible)
+         ========================= -->
+    <header id="topbar" role="banner">
+      <div id="title" aria-label="App title">Qubit Visualizer</div>
 
-    <div id="title-bar">
-      Bloch Sphere Visualizer
-      <span>Single-qubit rotations & state evolution</span>
-      <span>Created by Owen Lee</span>
-    </div>
+      <div class="spacer"></div>
 
-    <!-- Right-side control panel -->
-    <div id="controls-panel">
+      <!-- step controls compact (always visible) -->
+      <div id="stepControls" class="step-controls" aria-label="Step controls">
+        <button id="prevStep" class="icon-btn" title="Prev step (ArrowLeft)" aria-label="Prev step">
+          <span class="ico">←</span>
+        </button>
 
-      <!-- Gates -->
-      <div class="controls-section">
-        <div class="controls-header">Gates</div>
+        <button id="playPause" class="icon-btn" title="Play/Pause (Space)" aria-label="Play/Pause">
+          <span class="ico" id="playIcon">▶</span>
+        </button>
 
-        <div class="gate-row">
-          <span class="gate-group-label">Pauli</span>
-          <button class="gate-btn gate-x" data-gate="X">X</button>
-          <button class="gate-btn gate-y" data-gate="Y">Y</button>
-          <button class="gate-btn gate-z" data-gate="Z">Z</button>
-        </div>
+        <button id="nextStep" class="icon-btn" title="Next step (ArrowRight)" aria-label="Next step">
+          <span class="ico">→</span>
+        </button>
 
-        <div class="gate-row">
-          <span class="gate-group-label">Clifford</span>
-          <button class="gate-btn gate-h" data-gate="H">H</button>
-          <button class="gate-btn gate-s" data-gate="S">S</button>
-        </div>
-
-        <div class="gate-row">
-          <span class="gate-group-label">T-gate</span>
-          <button class="gate-btn gate-t" data-gate="T">T</button>
+        <div id="stepCounter" class="step-counter" aria-label="Step counter">
+          Step <span id="activeStepLabel">–</span>/<span id="stepCountLabel">12</span>
         </div>
       </div>
 
-      <!-- State Controls -->
-      <div class="controls-section">
-        <div class="controls-header">State & Controls</div>
+      <div class="spacer"></div>
 
-        <div class="controls-row">
-          <button class="secondary-btn" id="resetBtn">Reset |0⟩</button>
-          <button class="secondary-btn" data-gate="RESET1">Set |1⟩</button>
+      <!-- Qubit controls (always visible) -->
+      <div class="qubit-controls" aria-label="Qubit controls">
+        <button id="removeQubitTop" class="icon-btn" title="Remove qubit" aria-label="Remove qubit">
+          <span class="ico">−</span>
+        </button>
+        <div id="qubitCountLabel" class="step-counter" aria-label="Qubit count">Qubits <span id="qubitCountNum">1</span>/10</div>
+        <button id="addQubitTop" class="icon-btn" title="Add qubit" aria-label="Add qubit">
+          <span class="ico">＋</span>
+        </button>
+      </div>
+
+      <button id="resetState" class="icon-btn" title="Reset visualization state (R)" aria-label="Reset visualization state">
+        <span class="ico">⟲</span>
+      </button>
+
+      <!-- kebab menu -->
+      <div id="moreMenu" class="menu">
+        <button id="moreMenuBtn" class="icon-btn" aria-haspopup="menu" aria-expanded="false" title="More">
+          <span class="ico">⋮</span>
+        </button>
+
+        <div id="moreMenuPopover" class="menu-popover" role="menu" aria-label="More menu">
+          <button class="menu-item danger" id="menuClearCircuit" role="menuitem">Clear circuit…</button>
+
+          <div class="menu-sep"></div>
+
+          <div class="menu-group" role="none">
+            <div class="menu-label">Export…</div>
+            <button class="menu-item" id="menuExportJson" role="menuitem">Export JSON</button>
+            <button class="menu-item" id="menuExportPng" role="menuitem">Export PNG</button>
+          </div>
+
+          <div class="menu-sep"></div>
+
+          <div class="menu-group" role="none">
+            <div class="menu-label">Settings…</div>
+            <button class="menu-item" id="menuTheme" role="menuitem">Theme</button>
+            <button class="menu-item" id="menuShortcuts" role="menuitem">Shortcuts</button>
+            <button class="menu-item" id="menuSimulation" role="menuitem">Simulation</button>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- =========================
+         Main split view (always visible)
+         ========================= -->
+    <main id="main" role="main">
+      <!-- Bloch pane -->
+      <section id="blochPane" class="pane" aria-label="Bloch pane">
+        <div id="blochCanvas" aria-label="Bloch canvas region">
+          <div id="bloch-grid"></div>
         </div>
 
-        <div class="controls-row">
-          <label class="toggle-label">
-            <input type="checkbox" id="animToggle" checked />
-            <span class="toggle-slider"></span>
-            Smooth Animations
+        <!-- micro overlay (bottom-left) -->
+        <div id="blochOverlay" class="micro-overlay" aria-label="Bloch overlay">
+          <label class="micro-toggle" title="Toggle trajectory trail">
+            <input id="toggleTrajectory" type="checkbox" checked />
+            <span class="micro-pill">Trail</span>
           </label>
+
+          <button id="openProbPopover" class="micro-btn" title="Probabilities">
+            Probs
+          </button>
+
+          <button id="openBackendDrawer" class="micro-btn" title="Backend math">
+            Math
+          </button>
         </div>
 
-        <div class="state-display-row">
-          <div id="stateDisplay" class="state-display"></div>
-          <div id="blochVector" class="bloch-display"></div>
+        <!-- Prob popover (anchored near overlay) -->
+        <div id="probPopover" class="popover" aria-label="Probabilities popover">
+          <div id="probHistogram" class="mini-histogram" aria-label="Probability histogram"></div>
+          <div id="probNote" class="popover-note">Probabilities reflect measurement of the full register.</div>
+        </div>
+      </section>
+
+      <!-- primary splitter -->
+      <div id="primarySplitter" class="splitter" aria-label="Resize panes" title="Drag to resize"></div>
+
+      <!-- Circuit pane -->
+      <section id="circuitPane" class="pane" aria-label="Circuit pane">
+        <!-- circuit toolstrip (kept, but not required for qubit add/remove anymore) -->
+        <div id="circuitToolstrip" class="toolstrip" aria-label="Circuit toolstrip">
+          <button id="addQubit" class="icon-btn" title="Add qubit"><span class="ico">＋</span></button>
+          <button id="removeQubit" class="icon-btn" title="Remove qubit"><span class="ico">−</span></button>
+          <button id="deleteSelection" class="icon-btn" title="Delete selected"><span class="ico">⌫</span></button>
+          <button id="openGateLibrary" class="icon-btn" title="Gate Library"><span class="ico">▦</span></button>
+        </div>
+
+        <!-- Circuit canvas area (existing IDs preserved) -->
+        <div id="circuitCanvas">
+          <div id="circuit-grid">
+            <div id="circuit-canvas"></div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- =========================
+         Gate library (ALWAYS visible)
+         ========================= -->
+      <div class="gateLibTopControls">
+        <button class="iconChip" id="toggleTrajectoryBtn" type="button" title="Toggle trail">Trail</button>
+        <button class="iconChip" id="openProbBtn" type="button" title="Probabilities">Probs</button>
+        <button class="iconChip" id="openMathBtn" type="button" title="Backend math">Math</button>
+      </div>
+
+    <div id="gateLibrary" class="floating-panel always-open" aria-label="Gate library">
+      <div class="floating-header">
+        <button id="gateLibToggle" class="icon-btn" type="button" title="Minimize/Maximize (L)">
+        <span class="ico">▾</span>
+        </button>
+
+        <div class="floating-title">Gate Library</div>
+        <div class="floating-hint">Hover a gate to preview its matrix</div>
+      </div>
+
+      <!-- hover math preview -->
+      <div id="gateHoverMath" class="gate-hover-math" aria-label="Gate matrix preview"></div>
+
+      <!-- Existing palette renderer expects #gatePaletteRow -->
+      <div id="gatePaletteRow" class="gate-library-grid"></div>
+    </div>
+
+    <!-- =========================
+         Backend drawer (bottom, on demand)
+         ========================= -->
+    <div id="backendDrawer" class="drawer" aria-hidden="true">
+      <div id="backendHeader" class="drawer-header">
+        <div class="drawer-left">Unitary / State Update</div>
+
+        <div class="drawer-right">
+          <label class="drawer-toggle" title="Simplify">
+            <input id="toggleSimplify" type="checkbox" checked />
+            <span>Simplify</span>
+          </label>
+
+          <label class="drawer-toggle" title="Show matrix">
+            <input id="toggleShowMatrix" type="checkbox" />
+            <span>Show matrix</span>
+          </label>
+
+          <button id="copyLatex" class="icon-btn" title="Copy LaTeX" aria-label="Copy LaTeX">
+            <span class="ico">⧉</span>
+          </button>
+
+          <button id="closeBackendDrawer" class="icon-btn" title="Close (Esc)" aria-label="Close drawer">
+            <span class="ico">×</span>
+          </button>
         </div>
       </div>
+
+      <div id="unitaryMath" class="mathjax-panel">
+        <div class="math-col">
+          <div class="math-block">
+            <div class="math-label">Gate</div>
+            <div id="currentGateLatex" class="math-content"></div>
+          </div>
+
+          <div class="math-block">
+            <div class="math-label">Update</div>
+            <div id="stateUpdateLatex" class="math-content"></div>
+          </div>
+
+          <div class="math-block" id="matrixBlock">
+            <div class="math-label">Matrix</div>
+            <div id="optionalMatrixLatex" class="math-content"></div>
+          </div>
+        </div>
+
+        <div class="math-col">
+          <div class="math-block">
+            <div class="math-label">Bloch mapping</div>
+            <div id="blochUpdateLatex" class="math-content"></div>
+          </div>
+
+          <div class="math-block">
+            <div class="math-label">Notes</div>
+            <div id="notesLatex" class="math-content"></div>
+          </div>
+        </div>
+      </div>
+
+      <div id="drawerHandle" class="drawer-handle" title="Drag down to close"></div>
     </div>
+
+    <!-- lightweight backdrop for overlays (NOT used for gate library anymore) -->
+    <div id="overlayBackdrop" class="backdrop" aria-hidden="true"></div>
   </div>
 
-  <!-- Tooltip -->
-  <div id="gate-tooltip"></div>
-
-  <!-- Main JS -->
   <script type="module" src="./main.js"></script>
-
-  <!-- Tooltips with LaTeX -->
-  <script>
-    const gateDescriptions = {
-      X: "Pauli-X:<br>\\[ X = \\begin{pmatrix}0 & 1\\\\ 1 & 0\\end{pmatrix} \\]<br>180° rotation about X.",
-      Y: "Pauli-Y:<br>\\[ Y = \\begin{pmatrix}0 & -i\\\\ i & 0\\end{pmatrix} \\]<br>180° rotation about Y.",
-      Z: "Pauli-Z:<br>\\[ Z = \\begin{pmatrix}1 & 0\\\\ 0 & -1\\end{pmatrix} \\]<br>180° rotation about Z.",
-      H: "Hadamard:<br>\\[ H = \\tfrac{1}{\\sqrt{2}}\\begin{pmatrix}1 & 1\\\\ 1 & -1\\end{pmatrix} \\]<br>Creates superposition.",
-      S: "Phase gate S:<br>\\[ S = \\begin{pmatrix}1 & 0\\\\ 0 & i\\end{pmatrix} \\]<br>90° rotation about Z.",
-      T: "T-gate:<br>\\[ T = \\begin{pmatrix}1 & 0\\\\ 0 & e^{i\\pi/4}\\end{pmatrix} \\]<br>45° rotation about Z."
-    };
-
-    const tooltip = document.getElementById("gate-tooltip");
-    let hoverTimer = null;
-
-    document.querySelectorAll(".gate-btn").forEach(btn => {
-      const gate = btn.getAttribute("data-gate");
-
-      btn.addEventListener("mouseenter", e => {
-        hoverTimer = setTimeout(() => {
-          tooltip.innerHTML = gateDescriptions[gate] || "";
-          tooltip.style.opacity = 1;
-          if (typeof MathJax !== 'undefined') {
-            MathJax.typesetPromise([tooltip]);
-          }
-        }, 1000);
-      });
-
-      btn.addEventListener("mousemove", e => {
-        tooltip.style.left = e.clientX + 12 + "px";
-        tooltip.style.top = e.clientY + 12 + "px";
-      });
-
-      btn.addEventListener("mouseleave", () => {
-        clearTimeout(hoverTimer);
-        tooltip.style.opacity = 0;
-      });
-    });
-  </script>
 </body>
 </html>
