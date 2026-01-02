@@ -8,9 +8,10 @@
   display: inline-flex;
   gap: 8px;
   padding: 8px;
-  border-radius: 12px;
-  background: rgba(22,24,28,0.62);
-  backdrop-filter: blur(10px);
+  border-radius: 4px;
+  background: var(--surface);
+  border: 2px solid var(--line-strong);
+  box-shadow: 0 0 0 2px var(--line), 4px 4px 0 var(--shadow);
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.15s ease;
@@ -25,9 +26,10 @@ body.has-selection #circuitToolstrip{ opacity: 1; pointer-events: auto; }
   display: inline-flex;
   gap: 8px;
   padding: 8px;
-  border-radius: 12px;
-  background: rgba(22,24,28,0.62);
-  backdrop-filter: blur(10px);
+  border-radius: 4px;
+  background: var(--surface);
+  border: 2px solid var(--line-strong);
+  box-shadow: 0 0 0 2px var(--line), 4px 4px 0 var(--shadow);
   opacity: 0.15;
   transition: opacity 0.18s ease;
 }
@@ -47,7 +49,7 @@ body.is-playing #blochOverlay{ opacity: 0.25; }
   user-select: none;
 }
 .settings-title{
-  font-size: 0.78rem;
+  font-size: 0.62rem;
   letter-spacing: 0.05em;
   color: var(--muted);
 }
@@ -58,13 +60,14 @@ body.is-playing #blochOverlay{ opacity: 0.25; }
 .corner-btn{
   width: 24px;
   height: 24px;
-  border-radius: 8px;
-  border: 0;
-  background: rgba(245,245,245,0.06);
+  border-radius: 4px;
+  border: 2px solid var(--line-strong);
+  background: var(--surface2);
   color: var(--text);
   cursor: pointer;
+  box-shadow: 0 0 0 2px var(--line);
 }
-.corner-btn:hover{ background: rgba(245,245,245,0.12); }
+.corner-btn:hover{ background: var(--surface); }
 .settings-body{
   display: inline-flex;
   gap: 8px;
@@ -80,33 +83,36 @@ body.is-playing #blochOverlay{ opacity: 0.25; }
 .micro-btn{
   height: 28px;
   padding: 0 10px;
-  border-radius: 10px;
-  border: 0;
+  border-radius: 4px;
+  border: 2px solid var(--line-strong);
   cursor: pointer;
-  background: rgba(245,245,245,0.06);
+  background: var(--surface2);
   color: var(--text);
-  font-size: 0.80rem;
+  font-size: 0.70rem;
+  box-shadow: 0 0 0 2px var(--line);
 }
-.micro-btn:hover{ background: rgba(245,245,245,0.10); box-shadow: 0 0 0 1px var(--glow), 0 0 12px var(--glow); }
+.micro-btn:hover{ background: var(--surface); box-shadow: 0 0 0 2px var(--accent-strong), 0 0 0 2px var(--line); }
 
 .micro-toggle{ display: inline-flex; align-items: center; cursor: pointer; }
 .micro-toggle input{ display: none; }
 .micro-pill{
   height: 28px;
   padding: 0 10px;
-  border-radius: 10px;
+  border-radius: 4px;
   display: inline-flex;
   align-items: center;
-  background: rgba(245,245,245,0.06);
+  background: var(--surface2);
   color: var(--text);
-  font-size: 0.80rem;
+  font-size: 0.70rem;
+  border: 2px solid var(--line-strong);
+  box-shadow: 0 0 0 2px var(--line);
 }
 .micro-toggle input:checked + .micro-pill{
-  background: rgba(160, 170, 185, 0.22);
-  box-shadow: inset 0 0 0 1px rgba(245,245,245,0.10);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 2px var(--accent-strong);
 }
 .micro-toggle:hover .micro-pill{
-  box-shadow: 0 0 0 1px var(--glow), 0 0 12px var(--glow);
+  box-shadow: 0 0 0 2px var(--accent-strong), 0 0 0 2px var(--line);
 }
 .micro-slider{
   display: inline-flex;
@@ -115,7 +121,7 @@ body.is-playing #blochOverlay{ opacity: 0.25; }
 }
 .micro-slider input[type=range]{
   width: 110px;
-  accent-color: rgba(180,190,205,0.85);
+  accent-color: var(--accent-strong);
 }
 .micro-slider .size-val{
   min-width: 64px;
@@ -139,47 +145,46 @@ body.coin-anim-visible .coin-overlay{
 }
 .coin-panel{
   padding: 10px;
-  border-radius: 12px;
-  background: rgba(22,24,28,0.92);
-  box-shadow: 0 14px 32px rgba(0,0,0,0.42), 0 0 0 1px rgba(245,245,245,0.10);
+  border-radius: 4px;
+  background: var(--surface);
+  box-shadow: 0 0 0 2px var(--line), 6px 6px 0 var(--shadow);
+  border: 2px solid var(--line-strong);
 }
 .coin-panel-head{
   display: flex;
   align-items: center;
   justify-content: space-between;
   margin-bottom: 8px;
-  font-size: 0.82rem;
+  font-size: 0.7rem;
   color: var(--muted);
 }
 .coin-panel-title{ letter-spacing: 0.05em; text-transform: uppercase; }
 .coin-outcome{
   color: var(--text);
   font-weight: 700;
-  font-size: 0.9rem;
+  font-size: 0.82rem;
 }
 .coin-outcome.coin-hit{
-  color: #6effb4;
-  text-shadow: 0 0 12px rgba(110,255,180,0.65);
+  color: var(--accent-strong);
 }
 .coin-outcome.coin-pulse{
   animation: coinPulse 1.2s ease-in-out 2;
 }
 .coin-odds{
   margin: 2px 0 8px 0;
-  font-size: 0.78rem;
+  font-size: 0.7rem;
   color: var(--muted);
 }
 .coin-odds.coin-miss{
-  color: #ff9a8a;
-  transform: scale(0.96);
+  opacity: 0.8;
 }
 .coin-mount{
   width: 100%;
   aspect-ratio: 1;
-  border-radius: 12px;
-  background: rgba(245,245,245,0.04);
+  border-radius: 4px;
+  background: var(--surface2);
   overflow: hidden;
-  border: 1px solid rgba(245,245,245,0.06);
+  border: 2px solid var(--line-strong);
 }
 
 /* =========================
@@ -195,10 +200,10 @@ body.coin-anim-visible .coin-overlay{
   min-height: var(--drawerMinH);
   max-height: var(--drawerMaxH);
 
-  border-radius: 14px;
-  background: rgba(22,24,28,0.94);
-  backdrop-filter: blur(12px);
-  box-shadow: 0 18px 60px rgba(0,0,0,0.45);
+  border-radius: 6px;
+  background: var(--surface);
+  box-shadow: 0 0 0 2px var(--line), 6px 6px 0 var(--shadow);
+  border: 2px solid var(--line-strong);
 
   transform: translateY(calc(100% + 18px));
   transition: transform 0.18s ease;
@@ -215,10 +220,11 @@ body.backend-open #backendDrawer{ transform: translateY(0); }
   align-items: center;
   justify-content: space-between;
   padding: 0 12px;
-  background: rgba(245,245,245,0.04);
+  background: var(--surface2);
+  border-bottom: 2px solid var(--line-strong);
 }
 .drawer-left{
-  font-size: 0.80rem;
+  font-size: 0.7rem;
   color: var(--muted);
   letter-spacing: 0.05em;
 }
@@ -231,12 +237,12 @@ body.backend-open #backendDrawer{ transform: translateY(0); }
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 0.80rem;
+  font-size: 0.7rem;
   color: var(--muted);
   cursor: pointer;
   user-select: none;
 }
-.drawer-toggle input{ accent-color: rgba(180, 190, 205, 0.85); }
+.drawer-toggle input{ accent-color: var(--accent-strong); }
 
 .mathjax-panel{
   display: grid;
@@ -254,28 +260,30 @@ body.backend-open #backendDrawer{ transform: translateY(0); }
   min-height: 0;
 }
 .math-block{
-  background: rgba(245,245,245,0.03);
-  border-radius: 12px;
+  background: var(--surface2);
+  border-radius: 4px;
   padding: 10px;
+  border: 2px solid var(--line-strong);
 }
 .math-label{
-  font-size: 0.70rem;
+  font-size: 0.62rem;
   color: var(--muted);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   margin-bottom: 8px;
 }
 .math-content{
-  font-size: 0.85rem;
+  font-size: 0.76rem;
   color: var(--text);
   overflow-x: auto;
 }
 #matrixBlock{ display: none; }
 body.show-matrix #matrixBlock{ display: block; }
 .drawer-handle{
-  background: rgba(245,245,245,0.06);
+  background: var(--surface2);
   cursor: ns-resize;
   touch-action: none;
+  border-top: 2px solid var(--line-strong);
 }
 
 /* =========================
@@ -286,13 +294,13 @@ body.show-matrix #matrixBlock{ display: block; }
   left: 12px;
   bottom: 58px;
   width: 280px;
-  border-radius: 14px;
-  background: rgba(22,24,28,0.94);
-  backdrop-filter: blur(12px);
-  box-shadow: 0 18px 60px rgba(0,0,0,0.45);
+  border-radius: 6px;
+  background: var(--surface);
+  box-shadow: 0 0 0 2px var(--line), 6px 6px 0 var(--shadow);
   padding: 10px;
   display: none;
   z-index: 3000;
+  border: 2px solid var(--line-strong);
 }
 body.prob-open #probPopover{ display: block; }
 
@@ -313,15 +321,16 @@ body.prob-open #probPopover{ display: block; }
 }
 .bar-track{
   height: 8px;
-  border-radius: 999px;
-  background: rgba(245,245,245,0.06);
+  border-radius: 2px;
+  background: var(--surface2);
   overflow: hidden;
+  border: 2px solid var(--line-strong);
 }
 .bar-fill{
   height: 100%;
   width: 0%;
-  background: rgba(180, 190, 205, 0.55);
-  border-radius: 999px;
+  background: repeating-linear-gradient(90deg, var(--accent-strong), var(--accent-strong) 4px, transparent 4px, transparent 8px);
+  border-radius: 2px;
 }
 .prob-row{
   grid-template-columns: 52px 1fr;
@@ -334,11 +343,11 @@ body.prob-open #probPopover{ display: block; }
 .prob-math{
   grid-column: 1 / span 2;
   color: var(--text);
-  font-size: 0.82rem;
+  font-size: 0.72rem;
 }
 .popover-note{
   margin-top: 6px;
-  font-size: 0.74rem;
+  font-size: 0.62rem;
   color: var(--muted);
   line-height: 1.25;
 }
@@ -353,13 +362,13 @@ body.prob-open #probPopover{ display: block; }
   right: 0;
   top: 40px;
   width: 220px;
-  border-radius: 14px;
-  background: rgba(22,24,28,0.94);
-  backdrop-filter: blur(12px);
-  box-shadow: 0 18px 60px rgba(0,0,0,0.45);
+  border-radius: 6px;
+  background: var(--surface);
+  box-shadow: 0 0 0 2px var(--line), 6px 6px 0 var(--shadow);
   padding: 8px;
   display: none;
   z-index: 6000;
+  border: 2px solid var(--line-strong);
 }
 body.menu-open #moreMenuPopover{ display: block; }
 
@@ -367,26 +376,26 @@ body.menu-open #moreMenuPopover{ display: block; }
   width: 100%;
   text-align: left;
   padding: 9px 10px;
-  border-radius: 12px;
-  border: 0;
-  background: transparent;
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background: var(--surface2);
   color: var(--text);
   cursor: pointer;
-  font-size: 0.86rem;
+  font-size: 0.72rem;
 }
 .menu-item:hover{
-  background: rgba(245,245,245,0.06);
-  box-shadow: 0 0 0 1px var(--glow), 0 0 12px var(--glow);
+  background: var(--surface);
+  border-color: var(--accent-strong);
 }
-.menu-item.danger{ color: rgba(255, 160, 160, 0.95); }
+.menu-item.danger{ color: var(--accent-strong); }
 
 .menu-sep{
   height: 1px;
-  background: rgba(245,245,245,0.06);
+  background: var(--line);
   margin: 6px 0;
 }
 .menu-label{
-  font-size: 0.70rem;
+  font-size: 0.62rem;
   color: var(--muted);
   padding: 6px 10px 2px 10px;
   letter-spacing: 0.08em;
@@ -416,12 +425,12 @@ body.menu-open #overlayBackdrop{
 #hoverTooltip{
   position: fixed;
   transform: translate(-50%, -100%);
-  background: rgba(22,24,28,0.94);
+  background: var(--surface);
   color: var(--text);
   padding: 8px 10px;
-  border-radius: 10px;
-  font-size: 0.78rem;
-  box-shadow: 0 10px 28px rgba(0,0,0,0.32), 0 0 0 1px rgba(245,245,245,0.08);
+  border-radius: 4px;
+  font-size: 0.7rem;
+  box-shadow: 0 0 0 2px var(--line), 4px 4px 0 var(--shadow);
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.12s ease, transform 0.12s ease;

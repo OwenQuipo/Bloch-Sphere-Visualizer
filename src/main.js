@@ -3,6 +3,7 @@ import "./styles/index.css";
 import * as THREE from "three";
 import { CoinFlipAnimator } from "./visuals/coin-flip";
 import { BlochSphereWidget } from "./visuals/bloch-sphere";
+import { EntanglementVisuals } from "./visuals/entanglement-visuals";
 import { $, setText } from "./utils/dom";
 import {
   EXACT_COMPLEX,
@@ -21,7 +22,6 @@ import {
   addRho,
   approx,
   apply4Unitary,
-  applyCXApprox,
   applyGateToRho,
   applyGateToState,
   applyProjectorOn4,
@@ -49,6 +49,13 @@ import {
   rhoToPureState,
   scaleRho,
   tensor2,
+  buildProductStateVector,
+  applySingleToStateVector,
+  applyCXToStateVector,
+  measureProbabilitiesVector,
+  collapseStateVectorOnMeasurement,
+  reducedRhoFromStateVector,
+  pairRhoFromStateVector,
   singleOn4,
   toFraction,
   trace2MatSquared,
@@ -92,6 +99,8 @@ const TIP_MAP = {
   menuClearCircuit: "🧹 Clear entire circuit",
   menuExportJson: "💾 Export circuit JSON",
   menuExportPng: "🖼 Export screenshot",
+  themeToggle: "Switch dark / light mode",
+  menuTheme: "Toggle theme",
   inspectRho: "⧉ Inspect density matrix",
   measureQ0: "📏 Measure qubit 0",
   measureQ1: "📏 Measure qubit 1",
@@ -109,6 +118,11 @@ let measurementAnimEnabled = true;
 let coinAnimator = null;
 let measurementAnimRunId = 0;
 let entangledPairIndices = [0, 1];
+let entanglementVisuals = null;
+let entanglementLevel = 0;
+let entangledPairs = new Map(); // key -> { qubits: [a,b], rho }
+let latestPairStates = new Map(); // key -> { qubits: [a,b], rho }
+let latestStateVector = null;
 const BLOCH_TILE_SIZE_KEY = "blochTileMinPx";
 const SETTINGS_POS_KEY = "settingsPanelPos";
 const SETTINGS_COLLAPSE_KEY = "settingsPanelCollapsed";
@@ -117,6 +131,36 @@ let tooltipTimer = null;
 let tooltipTarget = null;
 let tooltipRefreshQueued = false;
 const PURITY_EPS = 1e-6;
+const THEME_KEY = "pixelMode";
+let themeMode = "dark";
+
+function loadThemePreference() {
+  try {
+    const saved = localStorage.getItem(THEME_KEY);
+    if (saved === "light" || saved === "dark") return saved;
+  } catch {}
+  return "dark";
+}
+
+function updateThemeToggleUI() {
+  const label = $("themeToggleLabel");
+  if (label) label.textContent = themeMode === "dark" ? "Dark" : "Light";
+}
+
+function applyTheme(mode) {
+  themeMode = mode === "light" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", themeMode);
+  document.body.setAttribute("data-theme", themeMode);
+  try { localStorage.setItem(THEME_KEY, themeMode); } catch {}
+  updateThemeToggleUI();
+  widgets.forEach(({ widget }) => widget?.setTheme?.(themeMode));
+  coinAnimator?.setTheme?.(themeMode);
+  entanglementVisuals?.refreshPalette?.();
+}
+
+function toggleThemeMode() {
+  applyTheme(themeMode === "dark" ? "light" : "dark");
+}
 
 // -------------------- Bloch layout --------------------
 function rebuildBlochGrid() {
@@ -142,6 +186,10 @@ function rebuildBlochGrid() {
     selPill.className = "selection-pill";
     selPill.textContent = "Selected";
     header.appendChild(selPill);
+    const entPill = document.createElement("span");
+    entPill.className = "entangled-tag";
+    entPill.textContent = "Entangled";
+    header.appendChild(entPill);
     tile.appendChild(header);
 
     const mount = document.createElement("div");
@@ -174,21 +222,63 @@ function rebuildBlochGrid() {
 
     const widget = new BlochSphereWidget({ mountEl: mount, qubitIndex: i });
     widget.init();
+    widget.setTheme?.(themeMode);
 
     const ro = new ResizeObserver(() => widget.resize());
     ro.observe(mount);
     ro.observe(tile);
 
-    widgets.push({ tileEl: tile, mountEl: mount, widget, ro, purityEl: purity, measEl: meas, stateChipEl: stateChip });
+    widgets.push({ tileEl: tile, mountEl: mount, widget, ro, purityEl: purity, measEl: meas, stateChipEl: stateChip, entTagEl: entPill });
   }
 
   refreshSelectedUI();
+  ensureEntanglementVisuals();
   requestAnimationFrame(resizeAllWidgets);
   queueTooltipRefresh();
 }
 
+// -------------------- Entanglement visuals --------------------
+function ensureEntanglementVisuals() {
+  const container = $("blochCanvas");
+  if (!container) return;
+  if (!entanglementVisuals) {
+    entanglementVisuals = new EntanglementVisuals({ containerEl: container, widgets, pairs: Array.from(entangledPairs.values()).map((p) => p.qubits) });
+  } else {
+    entanglementVisuals.setWidgets(widgets);
+    entanglementVisuals.setPairs(Array.from(entangledPairs.values()).map((p) => p.qubits));
+    entanglementVisuals.refreshPalette();
+    entanglementVisuals.setEntanglementLevel(entanglementLevel);
+    entanglementVisuals.resize?.();
+  }
+}
+
+function setEntanglementLevel(level) {
+  entanglementLevel = clamp(Number(level) || 0, 0, 1);
+  ensureEntanglementVisuals();
+  entanglementVisuals?.setEntanglementLevel(entanglementLevel);
+}
+
+function triggerEntanglementBurst(durationMs = 150) {
+  ensureEntanglementVisuals();
+  entanglementVisuals?.triggerEntanglementBurst(durationMs);
+  entanglementLevel = 1;
+}
+
+function clearEntanglement() {
+  ensureEntanglementVisuals();
+  entanglementLevel = 0;
+  entanglementVisuals?.clearEntanglement(420);
+}
+
+if (typeof window !== "undefined") {
+  window.setEntanglementLevel = setEntanglementLevel;
+  window.triggerEntanglementBurst = triggerEntanglementBurst;
+  window.clearEntanglement = clearEntanglement;
+}
+
 function resizeAllWidgets() {
   widgets.forEach(({ widget }) => widget.resize());
+  entanglementVisuals?.resize?.();
 }
 
 function refreshSelectedUI() {
@@ -211,7 +301,14 @@ function syncQubitCountUI() {
 // -------------------- Primary splitter --------------------
 const SPLIT_STORAGE_KEY = "primarySplitLeftPx";
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
-function isPairMember(q) { return q === entangledPairIndices[0] || q === entangledPairIndices[1]; }
+function makePairKey(a, b) { return a < b ? `${a}-${b}` : `${b}-${a}`; }
+function entangledPairForQubit(q, map = entangledPairs) {
+  for (const [key, pair] of map.entries()) {
+    if (pair?.qubits?.[0] === q || pair?.qubits?.[1] === q) return { key, pair };
+  }
+  return null;
+}
+function isPairMember(q, map = entangledPairs) { return !!entangledPairForQubit(q, map); }
 
 function applyStoredSplit() {
   const saved = localStorage.getItem(SPLIT_STORAGE_KEY);
@@ -222,12 +319,13 @@ function applyStoredSplit() {
 }
 
 function applyBlochTileSize(px) {
-  const clamped = clamp(px, 160, 520);
+  const clamped = clamp(px, 120, 520);
   document.documentElement.style.setProperty("--blochTileMin", `${clamped}px`);
   const label = $("blochTileSizeVal");
   if (label) label.textContent = `${clamped}px`;
   const slider = $("blochTileSize");
   if (slider && Number(slider.value) !== clamped) slider.value = String(clamped);
+  document.body.classList.toggle("bloch-single-col", clamped >= 520);
 }
 
 function initBlochTileSizer() {
@@ -239,7 +337,7 @@ function initBlochTileSizer() {
     slider.addEventListener("input", (e) => {
       const val = Number(e.target.value);
       applyBlochTileSize(val);
-      localStorage.setItem(BLOCH_TILE_SIZE_KEY, String(clamp(val, 160, 520)));
+      localStorage.setItem(BLOCH_TILE_SIZE_KEY, String(clamp(val, 120, 520)));
       requestAnimationFrame(resizeAllWidgets);
     });
   }
@@ -383,7 +481,7 @@ let singleQ = [];
 let multiQ = [];
 let pendingCX = null;
 
-const PALETTE_GATES = ["H", "X", "Y", "Z", "S", "T", "CX", "M", "CLEAR"];
+const PALETTE_GATES = ["H", "X", "Y", "Z", "S", "T", "CX", "M"];
 
 let draggingGate = null;
 let draggingFrom = null;
@@ -396,6 +494,10 @@ function initCircuitModel() {
   ensureInitialStates();
   measurementOverrideRho = null;
   latestGlobalRho = null;
+  latestStateVector = null;
+  entangledPairs = new Map();
+  latestPairStates = new Map();
+  entangledPairIndices = [0, Math.min(1, Math.max(0, qubitCount - 1))];
   measurementOutcomes = Array.from({ length: stepCount }, () => Array(qubitCount).fill(null));
   measurementOdds = Array.from({ length: stepCount }, () => Array(qubitCount).fill(null));
   measuredVisualOutcomes = Array.from({ length: qubitCount }, () => null);
@@ -495,6 +597,34 @@ function gateColorClass(g) {
   if (g === "T" || g === "Tdg") return "gate-t";
   if (g === "M") return "gate-m";
   return "";
+}
+
+function gateTooltip(g) {
+  const descriptions = {
+    H: "Hadamard: maps |0> -> (|0>+|1>)/√2",
+    X: "Pauli-X: bit flip",
+    Y: "Pauli-Y: phase+bit flip",
+    Z: "Pauli-Z: phase flip",
+    S: "S gate: phase π/2",
+    T: "T gate: phase π/4",
+    CX: "CNOT: flip target when control=1",
+    M: "Measurement symbol (visual)",
+  };
+  return descriptions[g] || `Gate ${g}`;
+}
+
+function gateDescription(g) {
+  const descriptions = {
+    H: "Hadamard creates ± superposition.",
+    X: "Pauli-X flips |0>↔|1>.",
+    Y: "Pauli-Y flips with i phase.",
+    Z: "Pauli-Z adds a π phase to |1>.",
+    S: "S gate: Z-rotation by π/2.",
+    T: "T gate: Z-rotation by π/4.",
+    CX: "Controlled-X (CNOT) flips target if control=1.",
+    M: "Measurement glyph used for visualization.",
+  };
+  return descriptions[g] || "";
 }
 
 function clearAt(q, s) {
@@ -746,171 +876,122 @@ function densityMatrix(state) {
 }
 
 function computeBlochTraces(stepIdx) {
-  const pairIndices = findPrimaryPair(stepIdx);
-  const [pairA, pairB] = pairIndices;
+  const cappedStep = Math.max(-1, Math.min(stepCount - 1, stepIdx ?? stepCount - 1));
   const stateList = Array.from({ length: qubitCount }, (_, q) => normalizeState(getInitialState(q)));
-  let rho4 = buildProductRho2(stateList[pairA], stateList[pairB]);
-
   const traces = Array.from({ length: qubitCount }, () => []);
   const measuredLatest = Array.from({ length: qubitCount }, () => null);
   const measuredEvents = [];
+  let stateVector = buildProductStateVector(stateList.map((s) => normalizeState(cloneState(s))));
 
   const pushAllVecs = () => {
     for (let q = 0; q < qubitCount; q++) {
-      if (q === pairA || q === pairB) {
-        const rhoPart = partialTraceQubit(rho4, q === pairA ? 1 : 0);
-        const v = blochFromRho(rhoPart);
-        stateList[q] = stateFromRho(rhoPart);
-        traces[q]?.push(v);
-      } else {
-        traces[q]?.push(getBlochVectorFromState(stateList[q]));
-      }
+      const rho = reducedRhoFromStateVector(stateVector, q, qubitCount);
+      const v = blochFromRho(rho);
+      stateList[q] = stateFromRho(rho);
+      traces[q]?.push(v);
     }
   };
 
   pushAllVecs();
 
-  if (stepIdx >= 0) {
-    for (let s = 0; s <= stepIdx; s++) {
+  if (cappedStep >= 0) {
+    for (let s = 0; s <= cappedStep; s++) {
       for (let q = 0; q < qubitCount; q++) {
         const g = singleQ[q]?.[s];
         if (g && GATES[g]) {
           if (g === "M") {
             const storedOdds = measurementOdds?.[s]?.[q];
-            if (q === pairA || q === pairB) {
-              const localIdx = q === pairA ? 0 : 1;
-              const probs = storedOdds || measureProbabilities(rho4, localIdx);
-              let outcome = measurementOutcomes?.[s]?.[q];
-              if (outcome == null) {
-                const total = Math.max(0, probs.p0 + probs.p1) || 1;
-                const r = Math.random();
-                outcome = (r < probs.p0 / total) ? 0 : 1;
-                if (measurementOutcomes[s]) measurementOutcomes[s][q] = outcome;
-              }
-              if (!storedOdds && measurementOdds[s]) {
-                measurementOdds[s][q] = { p0: probs.p0, p1: probs.p1 };
-              }
-              const { rho: collapsed } = collapseOnOutcome(rho4, localIdx, outcome);
-              rho4 = collapsed;
-              measuredLatest[q] = outcome;
-              measuredEvents.push({ qubit: q, outcome, step: s, probs });
-              pushAllVecs();
-              continue;
-            } else {
-              const state = stateList[q];
-              const rho = densityFromState(state);
-              const probs = storedOdds || probsFromRho(rho);
-              let outcome = measurementOutcomes?.[s]?.[q];
-              if (outcome == null) {
-                const total = Math.max(0, probs.p0 + probs.p1) || 1;
-                const r = Math.random();
-                outcome = (r < probs.p0 / total) ? 0 : 1;
-                if (measurementOutcomes[s]) measurementOutcomes[s][q] = outcome;
-              }
-              if (!storedOdds && measurementOdds[s]) {
-                measurementOdds[s][q] = { p0: probs.p0, p1: probs.p1 };
-              }
-              stateList[q] = outcome === 0 ? normalizeState({ alpha: c(1, 0), beta: c(0, 0) }) : normalizeState({ alpha: c(0, 0), beta: c(1, 0) });
-              measuredLatest[q] = outcome;
-              measuredEvents.push({ qubit: q, outcome, step: s, probs });
-              pushAllVecs();
-              continue;
+            const probs = storedOdds || measureProbabilitiesVector(stateVector, q, qubitCount);
+            const total = Math.max(0, probs.p0 + probs.p1) || 1;
+            let outcome = measurementOutcomes?.[s]?.[q];
+            if (outcome == null) {
+              const r = Math.random();
+              outcome = (r < probs.p0 / total) ? 0 : 1;
+              if (measurementOutcomes[s]) measurementOutcomes[s][q] = outcome;
             }
+            if (!storedOdds && measurementOdds[s]) {
+              measurementOdds[s][q] = { p0: probs.p0, p1: probs.p1 };
+            }
+            stateVector = collapseStateVectorOnMeasurement(stateVector, q, outcome, qubitCount);
+            measuredLatest[q] = outcome;
+            measuredEvents.push({ qubit: q, outcome, step: s, probs: { p0: probs.p0 / total, p1: probs.p1 / total } });
+            pushAllVecs();
+            continue;
           }
 
-          if (q === pairA || q === pairB) {
-            const U = GATES[g].matrix;
-            const beforeRho = partialTraceQubit(rho4, q === pairA ? 1 : 0);
-            const beforeV = blochFromRho(beforeRho);
-            const U4 = singleOn4(U, q === pairA ? 0 : 1);
-            rho4 = apply4Unitary(rho4, U4);
-            const axis = new THREE.Vector3(GATES[g].axis.x, GATES[g].axis.y, GATES[g].axis.z).normalize();
-            const beforeVec = new THREE.Vector3(beforeV.x, beforeV.y, beforeV.z);
-            const steps = 36;
-            for (let i = 1; i <= steps; i++) {
-              const t = i / steps;
-              const theta = GATES[g].angle * t;
-              const vt = rotateVectorAroundAxis(beforeVec, axis, theta);
-              if (q === 0) traces[0]?.push({ x: vt.x, y: vt.y, z: vt.z });
-              if (q === 1) traces[1]?.push({ x: vt.x, y: vt.y, z: vt.z });
-            }
-            const afterRho = partialTraceQubit(rho4, q === pairA ? 1 : 0);
-            const afterV = blochFromRho(afterRho);
-            stateList[q] = stateFromRho(afterRho);
-            traces[q]?.push(afterV);
-          } else {
-            const before = getBlochVectorFromState(stateList[q]);
-            const beforeVec = new THREE.Vector3(before.x, before.y, before.z);
-            stateList[q] = applyGateToState(stateList[q], g);
-            const after = getBlochVectorFromState(stateList[q]);
-            const afterVec = new THREE.Vector3(after.x, after.y, after.z);
-            const axis = new THREE.Vector3(GATES[g].axis.x, GATES[g].axis.y, GATES[g].axis.z).normalize();
-            const steps = 36;
-            for (let i = 1; i <= steps; i++) {
-              const t = i / steps;
-              const theta = GATES[g].angle * t;
-              const vt = rotateVectorAroundAxis(beforeVec, axis, theta);
-              traces[q]?.push({ x: vt.x, y: vt.y, z: vt.z });
-            }
-            traces[q]?.push({ x: afterVec.x, y: afterVec.y, z: afterVec.z });
+          const beforeRho = reducedRhoFromStateVector(stateVector, q, qubitCount);
+          const beforeV = blochFromRho(beforeRho);
+          const beforeVec = new THREE.Vector3(beforeV.x, beforeV.y, beforeV.z);
+          const U = GATES[g].matrix;
+          stateVector = applySingleToStateVector(stateVector, U, q, qubitCount);
+          const afterRho = reducedRhoFromStateVector(stateVector, q, qubitCount);
+          const afterV = blochFromRho(afterRho);
+          stateList[q] = stateFromRho(afterRho);
+          const axis = new THREE.Vector3(GATES[g].axis.x, GATES[g].axis.y, GATES[g].axis.z).normalize();
+          const steps = 36;
+          for (let i = 1; i <= steps; i++) {
+            const t = i / steps;
+            const theta = GATES[g].angle * t;
+            const vt = rotateVectorAroundAxis(beforeVec, axis, theta);
+            traces[q]?.push({ x: vt.x, y: vt.y, z: vt.z });
           }
+          traces[q]?.push(afterV);
         }
       }
 
       for (const op of multiQ[s]) {
         if (op.type !== "CX") continue;
-        const control = op.control;
-        const target = op.target;
-        if ((control === pairA && target === pairB) || (control === pairB && target === pairA)) {
-          const cxMat = control === pairA ? CX4 : CX_REVERSED;
-          rho4 = apply4Unitary(rho4, cxMat);
-        } else {
-          const controlState = control === pairA || control === pairB
-            ? stateFromRho(partialTraceQubit(rho4, control === pairA ? 1 : 0))
-            : cloneState(stateList[control]);
-          const targetState = target === pairA || target === pairB
-            ? stateFromRho(partialTraceQubit(rho4, target === pairA ? 1 : 0))
-            : cloneState(stateList[target]);
-
-          const updatedTarget = applyCXApprox(controlState, targetState);
-          if (target < qubitCount) stateList[target] = updatedTarget;
-
-          if (control === pairA || control === pairB || target === pairA || target === pairB) {
-            const pa = stateToPure(stateList[pairA]);
-            const pb = stateToPure(stateList[pairB]);
-            rho4 = buildProductRho2(pa, pb);
-          }
-        }
+        stateVector = applyCXToStateVector(stateVector, op.control, op.target, qubitCount);
         pushAllVecs();
       }
     }
   }
 
-  const states = Array.from({ length: qubitCount }, (_, idx) => {
-    if (idx === pairA || idx === pairB) return stateList[idx];
-    return stateList[idx];
-  });
+  const states = stateList.map((s) => cloneState(s));
+  const pairStates = new Map();
+  const entangledOnly = new Map();
+  for (let a = 0; a < qubitCount; a++) {
+    for (let b = a + 1; b < qubitCount; b++) {
+      const rho = pairRhoFromStateVector(stateVector, a, b, qubitCount);
+      const key = makePairKey(a, b);
+      const entry = { qubits: [a, b], rho };
+      pairStates.set(key, entry);
+      if (isEntangledFromRho(rho)) entangledOnly.set(key, entry);
+    }
+  }
+  const primaryEntry = entangledOnly.values().next().value || pairStates.values().next().value || null;
+  const pairIndices = primaryEntry?.qubits ?? findPrimaryPair(cappedStep);
+  const rho2 = primaryEntry?.rho ?? (pairIndices ? pairRhoFromStateVector(stateVector, pairIndices[0], pairIndices[1], qubitCount) : null);
 
-  return { states, traces, rho2: rho4, measuredEvents, measuredLatest, pairIndices };
+  return { states, traces, rho2, measuredEvents, measuredLatest, pairIndices, pairStates, entangledPairs: entangledOnly, stateVector };
 }
 
 function updateGateHoverMath(gateName) {
   const el = $("gateHoverMath");
   if (!el) return;
 
+  if (!gateName || !GATES[gateName]) {
+    el.innerHTML = `\\[\\text{Hover a gate to preview its matrix.}\\]`;
+    if (typeof MathJax !== "undefined") MathJax.typesetPromise([el]);
+    return;
+  }
+
+  const desc = gateDescription(gateName);
+
   if (gateName === "M") {
-    el.innerHTML = `\\[\\text{Measurement symbol (visual only; no collapse).}\\]`;
+    el.innerHTML = `<div class="gate-desc">${desc}</div>`;
     if (typeof MathJax !== "undefined") MathJax.typesetPromise([el]);
     return;
   }
 
-  if (!gateName || !GATES[gateName] || gateName === "CX" || gateName === "CLEAR") {
-    el.innerHTML = `\\[\\text{Hover a 1-qubit gate to preview its matrix.}\\]`;
+  if (gateName === "CX") {
+    const m = GATES.CX.matrix;
+    el.innerHTML = `<div class="gate-desc">${desc}</div>${matrixLatex("\\text{CX}", m)}`;
     if (typeof MathJax !== "undefined") MathJax.typesetPromise([el]);
     return;
   }
 
-  el.innerHTML = gateMatrixLatex(gateName);
+  el.innerHTML = `<div class="gate-desc">${desc}</div>${gateMatrixLatex(gateName)}`;
   if (typeof MathJax !== "undefined") MathJax.typesetPromise([el]);
 }
 
@@ -925,13 +1006,11 @@ function renderGatePalette() {
     item.className = "palette-gate";
     item.setAttribute("draggable", "true");
     item.dataset.gate = g;
-    item.dataset.tip = `Drag gate ${g}`;
+    item.dataset.tip = gateTooltip(g);
 
     const box = document.createElement("div");
     box.className = "gate-box " + gateColorClass(g);
-    if (g === "CLEAR") {
-      box.textContent = "🧽";
-    } else if (g === "M") {
+    if (g === "M") {
       box.classList.add("gate-measure");
       const mIcon = document.createElement("div");
       mIcon.className = "measure-icon";
@@ -1056,10 +1135,14 @@ function rebuildToStep(stepIdx) {
   measuredVisualOutcomes = Array.from({ length: qubitCount }, () => null);
   refreshMeasurementClasses();
 
-  const { states, traces, rho2, measuredEvents, measuredLatest, pairIndices } = computeBlochTraces(stepIdx);
+  const { states, traces, rho2, measuredEvents, measuredLatest, pairIndices, pairStates, entangledPairs: entPairs, stateVector } = computeBlochTraces(stepIdx);
   entangledPairIndices = pairIndices;
+  entangledPairs = entPairs;
+  latestPairStates = pairStates;
   latestGlobalRho = rho2;
-  const entangledNow = !!rho2 && isEntangledFromRho(rho2);
+  latestStateVector = stateVector;
+  entanglementVisuals?.setPairs?.(Array.from(entangledPairs.values()).map((p) => p.qubits));
+  const entangledNow = entangledPairs.size > 0;
   const eventsThisStep = (measuredEvents || []).filter((ev) => ev.step === stepIdx);
   const shouldAnimateMeasure = measurementAnimEnabled && !!coinAnimator && stepIdx >= 0 && eventsThisStep.length > 0;
   const holdMap = new Map();
@@ -1070,7 +1153,8 @@ function rebuildToStep(stepIdx) {
     const state = states[q] ?? normalizeState(getInitialState(q));
     const trace = traces[q] ?? [];
     const hold = shouldAnimateMeasure && eventsThisStep.some((ev) => ev.qubit === q);
-    const hideArrow = hold || (entangledNow && measuredVisualOutcomes[q] == null && isPairMember(q));
+    const entangledHere = entangledNow && measuredVisualOutcomes[q] == null && isPairMember(q, entangledPairs);
+    const hideArrow = hold || entangledHere;
     const hideTrace = hideArrow;
     w.setStateAndTrace(state, trace, { hideArrow, hideTrace });
     const rho = densityFromState(state);
@@ -1094,15 +1178,15 @@ function rebuildToStep(stepIdx) {
       }
     } else {
       applyMeasurementVisual(q, m, { cue: false });
-      updateStateChip(q, state, rho2);
+      updateStateChip(q, state, entangledPairs);
     }
   }
 
-  updateEntanglementIndicators(rho2);
+  updateEntanglementIndicators(entangledPairs);
   updateProbPopover();
   updateBackendMath();
   updateCorrelationsPanel();
-  updateGlobalStateBadges();
+  updateGlobalStateBadges(entangledPairs);
 
   // cue the most recent measurement events (if any) to emphasize collapse
   measuredEvents?.forEach(({ qubit, outcome, step }) => {
@@ -1111,7 +1195,7 @@ function rebuildToStep(stepIdx) {
   });
 
   if (shouldAnimateMeasure) {
-    return playMeasurementAnimations(eventsThisStep, holdMap, rho2);
+    return playMeasurementAnimations(eventsThisStep, holdMap);
   }
 }
 
@@ -1335,8 +1419,8 @@ function renderCircuit() {
       const gate = document.createElement("div");
       gate.className = `cgate ${gateColorClass(g)}`;
       gate.dataset.gate = g;
-      gate.style.left = `${x - 21}px`;
-      gate.style.top = `${y - 21}px`;
+      gate.style.left = `${x}px`;
+      gate.style.top = `${y}px`;
       gate.dataset.tip = g === "M" ? "Measurement gate" : `Gate ${g}`;
       if (g === "M") {
         gate.classList.add("cgate-measure");
@@ -1394,8 +1478,8 @@ function renderCircuit() {
         const g = document.createElement("div");
         g.className = "cgate cx-node";
         g.dataset.gate = "CX";
-        g.style.left = `${x - 21}px`;
-        g.style.top = `${y - 21}px`;
+        g.style.left = `${x}px`;
+        g.style.top = `${y}px`;
         g.dataset.tip = "CX control";
 
         const dot = document.createElement("div");
@@ -1436,8 +1520,8 @@ function renderCircuit() {
         const g = document.createElement("div");
         g.className = "cgate cx-node";
         g.dataset.gate = "CX";
-        g.style.left = `${x - 21}px`;
-        g.style.top = `${y - 21}px`;
+        g.style.left = `${x}px`;
+        g.style.top = `${y}px`;
         g.dataset.tip = "CX target";
 
         const tgt = document.createElement("div");
@@ -1848,7 +1932,7 @@ function applyMeasurementVisual(q, outcome, { cue = false, snap = false } = {}) 
   refreshMeasurementClasses();
 }
 
-function revealHeldMeasurement(q, held, rho2) {
+function revealHeldMeasurement(q, held) {
   if (!held) return;
   const entry = widgets[q];
   if (entry?.widget) {
@@ -1858,10 +1942,10 @@ function revealHeldMeasurement(q, held, rho2) {
     entry.stateChipEl.classList.remove("pending");
   }
   applyMeasurementVisual(q, held.outcome, { cue: true, snap: true });
-  updateStateChip(q, held.state, rho2);
+  updateStateChip(q, held.state, entangledPairs);
 }
 
-function playMeasurementAnimations(events, holdMap, rho2) {
+function playMeasurementAnimations(events, holdMap) {
   if (!events?.length || !coinAnimator || !measurementAnimEnabled) return null;
   measurementAnimRunId += 1;
   const runId = measurementAnimRunId;
@@ -1872,7 +1956,7 @@ function playMeasurementAnimations(events, holdMap, rho2) {
       const label = `q${ev.qubit}`;
       await coinAnimator.play(ev.outcome, { label, probs: ev.probs });
       if (runId !== measurementAnimRunId) return;
-      revealHeldMeasurement(ev.qubit, holdMap.get(ev.qubit), rho2);
+      revealHeldMeasurement(ev.qubit, holdMap.get(ev.qubit));
     }
   })();
 
@@ -2026,13 +2110,25 @@ function updateCorrelationsPanel() {
   });
 }
 
-function updateEntanglementIndicators(rho4) {
-  const entangled = !!rho4 && isEntangledFromRho(rho4);
+function updateEntanglementIndicators(pairMap = entangledPairs) {
+  const entangled = !!pairMap && pairMap.size > 0;
   document.body.classList.toggle("entangled", entangled);
   document.body.classList.toggle("corr-active", entangled);
-  widgets.forEach(({ tileEl }, idx) => {
-    const ent = entangled && isPairMember(idx) && measuredVisualOutcomes[idx] == null;
-    tileEl.classList.toggle("entangled", ent);
+  // Drive the Three.js entanglement layer.
+  if (entangled) {
+    if (entanglementLevel <= 0) {
+      triggerEntanglementBurst();
+      entanglementLevel = 1;
+    } else if (!entanglementVisuals?.isAnimating?.()) {
+      setEntanglementLevel(1);
+    }
+  } else if (entanglementLevel > 0) {
+    clearEntanglement();
+  }
+  widgets.forEach(({ tileEl, entTagEl }, idx) => {
+    const ent = entangled && isPairMember(idx, pairMap) && measuredVisualOutcomes[idx] == null;
+    tileEl?.classList.toggle("entangled", ent);
+    entTagEl?.classList.toggle("on", ent);
   });
 }
 
@@ -2079,10 +2175,11 @@ function describeBellState(rho4, eps = 1e-3) {
   return best[1] > 1 - eps ? best[0] : null;
 }
 
-function updateGlobalStateBadges() {
-  const rho = getCurrentRho4();
-  const entangled = !!rho && isEntangledFromRho(rho);
-  const bell = rho ? describeBellState(rho) : null;
+function updateGlobalStateBadges(pairMap = entangledPairs) {
+  const bells = new Map();
+  pairMap?.forEach((entry, key) => {
+    if (isEntangledFromRho(entry.rho)) bells.set(key, describeBellState(entry.rho));
+  });
   widgets.forEach((w, idx) => {
     const badge = w?.stateChipEl;
     if (!badge) return;
@@ -2091,16 +2188,16 @@ function updateGlobalStateBadges() {
       badge.classList.remove("entangled");
       return;
     }
-    if (entangled && isPairMember(idx)) {
-      if (bell) {
-        const bellLatex = bellToLatex(bell);
-        badge.innerHTML = `\\(${bellLatex}\\)`;
-      } else {
-        badge.innerHTML = `\\(\\text{Entangled state}\\)`;
-      }
+    const entry = entangledPairForQubit(idx, pairMap);
+    if (entry && isEntangledFromRho(entry.pair.rho)) {
+      const bell = bells.get(entry.key);
+      const bellLatex = bell ? bellToLatex(bell) : null;
+      badge.innerHTML = bellLatex ? `\\(${bellLatex}\\)` : `\\(\\text{Entangled state}\\)`;
       badge.classList.add("on");
       badge.classList.add("entangled");
       typesetNode(badge);
+    } else {
+      badge.classList.remove("entangled");
     }
   });
 }
@@ -2157,7 +2254,7 @@ function bellToLatex(label) {
   return label;
 }
 
-function updateStateChip(q, state, globalRho4) {
+function updateStateChip(q, state, pairMap = entangledPairs) {
   const entry = widgets[q];
   if (!entry) return;
   const chip = entry.stateChipEl;
@@ -2166,15 +2263,15 @@ function updateStateChip(q, state, globalRho4) {
   const rho = densityFromState(state);
   const diracLatex = formatDiracLatex(rho, q);
 
-  const entangledPair = isPairMember(q);
-  const entangled = entangledPair && !!globalRho4 && isEntangledFromRho(globalRho4) && measuredVisualOutcomes[q] == null;
-  const bell = entangled ? describeBellState(globalRho4) : null;
+  const entEntry = entangledPairForQubit(q, pairMap);
+  const entangled = !!entEntry && isEntangledFromRho(entEntry.pair.rho) && measuredVisualOutcomes[q] == null;
+  const bell = entangled ? describeBellState(entEntry.pair.rho) : null;
   const superposed = isSuperposed(rho);
 
   const suffix = entangled && bell ? `\\quad(${bellToLatex(bell)})` : "";
   chip.innerHTML = `\\(${diracLatex}${suffix}\\)`;
   chip.classList.add("on");
-  chip.classList.toggle("entangled", superposed);
+  chip.classList.toggle("entangled", superposed || entangled);
   typesetNode(chip);
 }
 
@@ -2204,9 +2301,10 @@ function showInspectPopover() {
 }
 function closeInspectPopover() { $("inspectPopover")?.classList.remove("on"); }
 
-function computeBlochTracesFromRho(rho4) {
+function computeBlochTracesFromRho(rho4, pair = entangledPairIndices) {
   const traces = Array.from({ length: qubitCount }, () => []);
-  const [pairA, pairB] = entangledPairIndices;
+  const pairA = pair?.[0] ?? 0;
+  const pairB = pair?.[1] ?? Math.min(1, Math.max(0, qubitCount - 1));
   const rhoA = partialTraceQubit(rho4, 1);
   const rhoB = partialTraceQubit(rho4, 0);
   const vA = blochFromRho(rhoA);
@@ -2226,10 +2324,61 @@ function computeBlochTracesFromRho(rho4) {
 }
 
 function measureQubit(idx) {
-  if (!isPairMember(idx)) return;
-  const rho = getCurrentRho4();
+  const hasVector = Array.isArray(latestStateVector) && latestStateVector.length === 1 << qubitCount;
+  if (hasVector) {
+    const probs = measureProbabilitiesVector(latestStateVector, idx, qubitCount);
+    const total = Math.max(0, probs.p0 + probs.p1) || 1;
+    const r = Math.random();
+    const outcome = r < probs.p0 / total ? 0 : 1;
+    latestStateVector = collapseStateVectorOnMeasurement(latestStateVector, idx, outcome, qubitCount);
+
+    const pairMap = new Map();
+    const entMap = new Map();
+    for (let a = 0; a < qubitCount; a++) {
+      for (let b = a + 1; b < qubitCount; b++) {
+        const rho = pairRhoFromStateVector(latestStateVector, a, b, qubitCount);
+        const key = makePairKey(a, b);
+        const entry = { qubits: [a, b], rho };
+        pairMap.set(key, entry);
+        if (isEntangledFromRho(rho)) entMap.set(key, entry);
+      }
+    }
+    latestPairStates = pairMap;
+    entangledPairs = entMap;
+    const primaryEntry = entMap.values().next().value || pairMap.values().next().value || null;
+    entangledPairIndices = primaryEntry?.qubits ?? entangledPairIndices;
+    latestGlobalRho = entangledPairIndices ? pairRhoFromStateVector(latestStateVector, entangledPairIndices[0], entangledPairIndices[1], qubitCount) : null;
+    measurementOverrideRho = latestGlobalRho;
+  entanglementVisuals?.setPairs?.(Array.from(entangledPairs.values()).map((p) => p.qubits));
+
+    for (let q = 0; q < qubitCount; q++) {
+      const rho = reducedRhoFromStateVector(latestStateVector, q, qubitCount);
+      const state = stateFromRho(rho);
+      const trace = [blochFromRho(rho)];
+      const w = widgets[q]?.widget;
+      widgets[q]?.purityEl && updatePurityChip(widgets[q].purityEl, trace2MatSquared(rho));
+      if (w) w.setStateAndTrace(state, trace, { hideArrow: false });
+      updateStateChip(q, state, entangledPairs);
+    }
+
+    applyMeasurementVisual(idx, outcome, { cue: true, snap: true });
+    updateEntanglementIndicators(entangledPairs);
+    updateCorrelationsPanel();
+    updateProbPopover();
+    updateBackendMath();
+    updateGlobalStateBadges(entangledPairs);
+    document.body.classList.add("measurement-flash");
+    setTimeout(() => document.body.classList.remove("measurement-flash"), 280);
+    showToast(`Measured q${idx} = ${outcome}`);
+    return;
+  }
+
+  // Fallback: pair-only measurement if global state vector is unavailable.
+  const entEntry = entangledPairForQubit(idx, entangledPairs);
+  if (!entEntry) return;
+  const rho = entEntry.pair.rho;
   if (!rho) return;
-  const localIdx = idx === entangledPairIndices[0] ? 0 : 1;
+  const localIdx = entEntry.pair.qubits[0] === idx ? 0 : 1;
   const probs = measureProbabilities(rho, localIdx);
   const total = Math.max(0, probs.p0 + probs.p1) || 1;
   const r = Math.random();
@@ -2239,18 +2388,25 @@ function measureQubit(idx) {
 
   measurementOverrideRho = collapsed;
   latestGlobalRho = collapsed;
-  const { states, traces } = computeBlochTracesFromRho(collapsed);
+  const key = makePairKey(entEntry.pair.qubits[0], entEntry.pair.qubits[1]);
+  const updatedPair = { qubits: [...entEntry.pair.qubits], rho: collapsed };
+  latestPairStates = new Map([[key, updatedPair]]);
+  entangledPairs = isEntangledFromRho(collapsed) ? new Map([[key, updatedPair]]) : new Map();
+  entangledPairIndices = updatedPair.qubits;
+  entanglementVisuals?.setPairs?.(Array.from(entangledPairs.values()).map((p) => p.qubits));
+  const { states, traces } = computeBlochTracesFromRho(collapsed, updatedPair.qubits);
   for (let q = 0; q < qubitCount; q++) {
     const w = widgets[q]?.widget;
     if (!w) continue;
     w.setStateAndTrace(states[q], traces[q], { hideArrow: false });
-    updateStateChip(q, states[q], collapsed);
+    updateStateChip(q, states[q], entangledPairs);
   }
   applyMeasurementVisual(idx, outcome, { cue: true, snap: true });
-  updateEntanglementIndicators(collapsed);
+  updateEntanglementIndicators(entangledPairs);
   updateCorrelationsPanel();
   updateProbPopover();
   updateBackendMath();
+  updateGlobalStateBadges(entangledPairs);
   document.body.classList.add("measurement-flash");
   setTimeout(() => document.body.classList.remove("measurement-flash"), 280);
   showToast(`Measured q${idx} = ${outcome}`);
@@ -2398,6 +2554,8 @@ function onGlobalKeydown(e) {
 
 // -------------------- Boot (UI wiring only) --------------------
 window.addEventListener("load", () => {
+  themeMode = loadThemePreference();
+  applyTheme(themeMode);
   applyStoredSplit();
 
   initCircuitModel();
@@ -2424,6 +2582,7 @@ window.addEventListener("load", () => {
   $("nextStep")?.addEventListener("click", () => stepForward());
   $("playPause")?.addEventListener("click", () => togglePlayback());
   $("resetState")?.addEventListener("click", () => resetStepCursor());
+  $("themeToggle")?.addEventListener("click", () => toggleThemeMode());
 
   // Qubit controls (topbar)
   $("addQubitTop")?.addEventListener("click", () => addQubit());
@@ -2534,6 +2693,7 @@ window.addEventListener("load", () => {
   ["menuExportJson","menuExportPng","menuTheme","menuShortcuts","menuSimulation"].forEach((id) => {
     $(id)?.addEventListener("click", () => closeMenu());
   });
+  $("menuTheme")?.addEventListener("click", () => toggleThemeMode());
 
   $("inspectRho")?.addEventListener("click", (e) => { e.stopPropagation(); showInspectPopover(); });
   $("closeInspect")?.addEventListener("click", () => closeInspectPopover());
@@ -2598,6 +2758,7 @@ $("gateLibToggle")?.addEventListener("click", (e) => {
   const coinOdds = $("coinOdds");
   if (coinMount) {
     coinAnimator = new CoinFlipAnimator({ mountEl: coinMount, statusEl: coinLabel, oddsEl: coinOdds });
+    coinAnimator.theme = themeMode;
     coinAnimator.init();
     window.addEventListener("resize", () => coinAnimator?.resize?.());
   }

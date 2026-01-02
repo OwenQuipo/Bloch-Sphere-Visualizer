@@ -23,6 +23,14 @@ function normalizeState(state) {
   return state;
 }
 
+function normalizeStateVector(vec) {
+  let norm2 = 0;
+  for (const z of vec) norm2 += cAbs2(z);
+  const norm = Math.sqrt(norm2) || 1;
+  if (Math.abs(norm - 1) < 1e-12) return vec;
+  return vec.map((z) => cScale(z, 1 / norm));
+}
+
 function fmtComplex(z, digits = 2, eps = 1e-10) {
   const re = Math.abs(z.re) < eps ? 0 : z.re;
   const im = Math.abs(z.im) < eps ? 0 : z.im;
@@ -258,6 +266,207 @@ function applyGateToState(state, gateName) {
   return state;
 }
 
+function partialTranspose2(rho4) {
+  // Partial transpose on the second qubit (B) in a 2-qubit 4x4 density matrix.
+  const out = [
+    [c(0,0), c(0,0), c(0,0), c(0,0)],
+    [c(0,0), c(0,0), c(0,0), c(0,0)],
+    [c(0,0), c(0,0), c(0,0), c(0,0)],
+    [c(0,0), c(0,0), c(0,0), c(0,0)],
+  ];
+  const idx = (a, b) => (a << 1) | b;
+  for (let a = 0; a < 2; a++) {
+    for (let b = 0; b < 2; b++) {
+      for (let c0 = 0; c0 < 2; c0++) {
+        for (let d = 0; d < 2; d++) {
+          const i = idx(a, b);
+          const j = idx(c0, d);
+          const src = rho4[i][j];
+          const ti = idx(a, d); // transpose on second qubit (b<->d)
+          const tj = idx(c0, b);
+          out[ti][tj] = c(src.re, src.im);
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function hermitianToRealSym(M) {
+  // Converts a Hermitian complex matrix to an equivalent real symmetric block matrix (eigenvalues preserved).
+  const n = M.length;
+  const out = Array.from({ length: n * 2 }, () => Array(n * 2).fill(0));
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      const z = M[i][j];
+      out[2*i][2*j] = z.re;
+      out[2*i][2*j+1] = -z.im;
+      out[2*i+1][2*j] = z.im;
+      out[2*i+1][2*j+1] = z.re;
+    }
+  }
+  return out;
+}
+
+function jacobiEigenvaluesSym(A, tol = 1e-12, maxIter = 64) {
+  const n = A.length;
+  const a = A.map((row) => row.slice());
+  for (let iter = 0; iter < maxIter; iter++) {
+    let p = 0, q = 1;
+    let max = Math.abs(a[p][q]);
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        const v = Math.abs(a[i][j]);
+        if (v > max) {
+          max = v;
+          p = i; q = j;
+        }
+      }
+    }
+    if (max < tol) break;
+    const app = a[p][p];
+    const aqq = a[q][q];
+    const apq = a[p][q];
+    const phi = 0.5 * Math.atan2(2 * apq, aqq - app);
+    const c0 = Math.cos(phi);
+    const s0 = Math.sin(phi);
+    for (let k = 0; k < n; k++) {
+      if (k === p || k === q) continue;
+      const akp = a[k][p];
+      const akq = a[k][q];
+      a[k][p] = a[p][k] = c0 * akp - s0 * akq;
+      a[k][q] = a[q][k] = s0 * akp + c0 * akq;
+    }
+    const appNew = c0 * c0 * app - 2 * s0 * c0 * apq + s0 * s0 * aqq;
+    const aqqNew = s0 * s0 * app + 2 * s0 * c0 * apq + c0 * c0 * aqq;
+    a[p][p] = appNew;
+    a[q][q] = aqqNew;
+    a[p][q] = a[q][p] = 0;
+  }
+  return a.map((row, i) => row[i]);
+}
+
+function minEigenvalueHermitian(M) {
+  const realSym = hermitianToRealSym(M);
+  const vals = jacobiEigenvaluesSym(realSym);
+  return Math.min(...vals);
+}
+
+// -------------------- N-qubit pure state helpers --------------------
+function buildProductStateVector(singleStates = []) {
+  let vec = [c(1, 0)];
+  singleStates.forEach((raw) => {
+    const st = normalizeState({
+      alpha: c(raw.alpha.re, raw.alpha.im),
+      beta: c(raw.beta.re, raw.beta.im),
+    });
+    const next = [];
+    for (const amp of vec) {
+      next.push(cmul(amp, st.alpha));
+      next.push(cmul(amp, st.beta));
+    }
+    vec = next;
+  });
+  return normalizeStateVector(vec);
+}
+
+function applySingleToStateVector(vec, U, qubit, totalQubits) {
+  const bit = 1 << (totalQubits - 1 - qubit);
+  const out = Array.from(vec);
+  for (let base = 0; base < vec.length; base += bit * 2) {
+    for (let i = 0; i < bit; i++) {
+      const i0 = base + i;
+      const i1 = i0 + bit;
+      const a0 = vec[i0];
+      const a1 = vec[i1];
+      out[i0] = cAdd(cmul(U[0][0], a0), cmul(U[0][1], a1));
+      out[i1] = cAdd(cmul(U[1][0], a0), cmul(U[1][1], a1));
+    }
+  }
+  return normalizeStateVector(out);
+}
+
+function applyCXToStateVector(vec, control, target, totalQubits) {
+  const cBit = 1 << (totalQubits - 1 - control);
+  const tBit = 1 << (totalQubits - 1 - target);
+  const out = Array.from(vec);
+  for (let i = 0; i < vec.length; i++) {
+    if ((i & cBit) === 0) continue;
+    if ((i & tBit) !== 0) continue;
+    const j = i | tBit;
+    out[i] = vec[j];
+    out[j] = vec[i];
+  }
+  return out;
+}
+
+function measureProbabilitiesVector(vec, qubit, totalQubits) {
+  const bit = 1 << (totalQubits - 1 - qubit);
+  let p0 = 0;
+  let p1 = 0;
+  for (let i = 0; i < vec.length; i++) {
+    const amp2 = cAbs2(vec[i]);
+    if (i & bit) p1 += amp2;
+    else p0 += amp2;
+  }
+  return { p0, p1 };
+}
+
+function collapseStateVectorOnMeasurement(vec, qubit, outcome, totalQubits) {
+  const bit = 1 << (totalQubits - 1 - qubit);
+  const out = vec.map((z, idx) => ((idx & bit) === (outcome ? bit : 0) ? z : c(0, 0)));
+  return normalizeStateVector(out);
+}
+
+function reducedRhoFromStateVector(vec, qubit, totalQubits) {
+  const bit = 1 << (totalQubits - 1 - qubit);
+  const rho = [
+    [c(0, 0), c(0, 0)],
+    [c(0, 0), c(0, 0)],
+  ];
+  for (let base = 0; base < vec.length; base += bit * 2) {
+    for (let i = 0; i < bit; i++) {
+      const idx0 = base + i;
+      const idx1 = idx0 + bit;
+      const a0 = vec[idx0];
+      const a1 = vec[idx1];
+      rho[0][0] = cAdd(rho[0][0], cmul(a0, cConj(a0)));
+      rho[0][1] = cAdd(rho[0][1], cmul(a0, cConj(a1)));
+      rho[1][0] = cAdd(rho[1][0], cmul(a1, cConj(a0)));
+      rho[1][1] = cAdd(rho[1][1], cmul(a1, cConj(a1)));
+    }
+  }
+  return rho;
+}
+
+function pairRhoFromStateVector(vec, qa, qb, totalQubits) {
+  const maskA = 1 << (totalQubits - 1 - qa);
+  const maskB = 1 << (totalQubits - 1 - qb);
+  const baseMask = ~(maskA | maskB);
+  const rho = Array.from({ length: 4 }, () => Array(4).fill(c(0, 0)));
+  const grouped = new Map();
+
+  for (let idx = 0; idx < vec.length; idx++) {
+    const base = idx & baseMask;
+    const a = (idx & maskA) ? 1 : 0;
+    const b = (idx & maskB) ? 1 : 0;
+    const slot = (a << 1) | b; // 00,01,10,11 with qa as first bit
+    if (!grouped.has(base)) grouped.set(base, [c(0, 0), c(0, 0), c(0, 0), c(0, 0)]);
+    const arr = grouped.get(base);
+    arr[slot] = vec[idx];
+  }
+
+  grouped.forEach((amps) => {
+    for (let i = 0; i < 4; i++) {
+      for (let j = 0; j < 4; j++) {
+        rho[i][j] = cAdd(rho[i][j], cmul(amps[i], cConj(amps[j])));
+      }
+    }
+  });
+
+  return rho;
+}
+
 // -------------------- Two-qubit helpers --------------------
 const PAULI_X = [[c(0,0), c(1,0)], [c(1,0), c(0,0)]];
 const PAULI_Y = [[c(0,0), c(0,-1)], [c(0,1), c(0,0)]];
@@ -414,11 +623,10 @@ function expectationPauliPair(rho4, A, B) {
 }
 
 function isEntangledFromRho(rho4, eps = 1e-6) {
-  const rhoA = partialTraceQubit(rho4, 1);
-  const rhoB = partialTraceQubit(rho4, 0);
-  const purityA = trace2MatSquared(rhoA);
-  const purityB = trace2MatSquared(rhoB);
-  return purityA < 1 - eps && purityB < 1 - eps ? true : (purityA < 1 - eps || purityB < 1 - eps);
+  // Peres-Horodecki PPT test for 2 qubits: entangled iff partial transpose has a negative eigenvalue.
+  const pt = partialTranspose2(rho4);
+  const lambdaMin = minEigenvalueHermitian(pt);
+  return lambdaMin < -eps;
 }
 
 export {
@@ -452,6 +660,8 @@ export {
   cScale,
   cmul,
   densityFromState,
+  minEigenvalueHermitian,
+  partialTranspose2,
   formatExactComplex,
   fracLatex,
   getBlochVectorFromState,
@@ -466,6 +676,14 @@ export {
   rhoToPureState,
   scaleRho,
   tensor2,
+  normalizeStateVector,
+  buildProductStateVector,
+  applySingleToStateVector,
+  applyCXToStateVector,
+  measureProbabilitiesVector,
+  collapseStateVectorOnMeasurement,
+  reducedRhoFromStateVector,
+  pairRhoFromStateVector,
   singleOn4,
   toFraction,
   trace2MatSquared,

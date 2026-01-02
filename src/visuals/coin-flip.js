@@ -2,8 +2,30 @@
 import * as THREE from "three";
 import { typesetNode } from "../utils/mathjax";
 
+const COIN_THEMES = {
+  dark: {
+    face: "#f5f5f5",
+    rim: "#ffffff",
+    text: "#050505",
+    table: "#050505",
+    shadow: 0.24,
+  },
+  light: {
+    face: "#0b0b0b",
+    rim: "#000000",
+    text: "#f7f7f7",
+    table: "#f8f8f6",
+    shadow: 0.18,
+  },
+};
+
+function getCssColor(name, fallback) {
+  const raw = getComputedStyle(document.documentElement).getPropertyValue(name);
+  return raw?.trim() || fallback;
+}
+
 // -------------------- Measurement coin animation (top-down) --------------------
-function makeCoinFaceTexture(label) {
+function makeCoinFaceTexture(label, palette) {
   const size = 256;
   const canvas = document.createElement("canvas");
   canvas.width = canvas.height = size;
@@ -11,29 +33,28 @@ function makeCoinFaceTexture(label) {
   const center = size / 2;
   const radius = size * 0.42;
 
-  const grad = ctx.createRadialGradient(center - radius * 0.2, center - radius * 0.2, radius * 0.2, center, center, radius);
-  grad.addColorStop(0, "#fefefe");
-  grad.addColorStop(0.5, "#e4e6ec");
-  grad.addColorStop(1, "#c9ceda");
-  ctx.fillStyle = grad;
+  ctx.imageSmoothingEnabled = false;
+  ctx.fillStyle = palette.face;
   ctx.beginPath();
   ctx.arc(center, center, radius, 0, Math.PI * 2);
   ctx.fill();
 
-  ctx.strokeStyle = "rgba(40,44,54,0.35)";
-  ctx.lineWidth = size * 0.02;
+  ctx.strokeStyle = palette.rim;
+  ctx.lineWidth = size * 0.04;
   ctx.beginPath();
-  ctx.arc(center, center, radius * 0.88, 0, Math.PI * 2);
+  ctx.arc(center, center, radius * 0.86, 0, Math.PI * 2);
   ctx.stroke();
 
-  ctx.fillStyle = "#0b0c0e";
-  ctx.font = `${Math.floor(size * 0.28)}px "Times New Roman", Georgia, serif`;
+  ctx.fillStyle = palette.text;
+  ctx.font = `${Math.floor(size * 0.24)}px "Press Start 2P", "Courier New", monospace`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillText(label, center, center);
 
   const tex = new THREE.CanvasTexture(canvas);
   tex.anisotropy = 4;
+  tex.minFilter = THREE.NearestFilter;
+  tex.magFilter = THREE.NearestFilter;
   return tex;
 }
 
@@ -55,6 +76,8 @@ class CoinFlipAnimator {
     this.targetIsOne = false;
     this._resolve = null;
     this.resultHoldMs = 750;
+
+    this.theme = document.documentElement.getAttribute("data-theme") || "dark";
   }
 
   init() {
@@ -64,6 +87,7 @@ class CoinFlipAnimator {
     const height = this.mountEl.clientHeight || 220;
     const aspect = width / height;
     const viewSize = 1.7;
+    const palette = this._getPalette();
 
     this.scene = new THREE.Scene();
 
@@ -79,9 +103,10 @@ class CoinFlipAnimator {
     this.camera.lookAt(0, 0, 0);
 
     try {
-      this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+      this.renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true });
       this.renderer.setSize(width, height);
       this.renderer.setPixelRatio(window.devicePixelRatio);
+      this.renderer.domElement.style.imageRendering = "pixelated";
       this.mountEl.appendChild(this.renderer.domElement);
       this.renderer.domElement.addEventListener("webglcontextlost", (e) => this._handleContextLost(e), false);
     } catch (err) {
@@ -96,7 +121,7 @@ class CoinFlipAnimator {
 
     const table = new THREE.Mesh(
       new THREE.PlaneGeometry(6, 6),
-      new THREE.MeshStandardMaterial({ color: 0x0d0f13, roughness: 0.94, metalness: 0.04 })
+      new THREE.MeshStandardMaterial({ color: new THREE.Color(palette.table), roughness: 0.94, metalness: 0.04 })
     );
     table.rotation.x = -Math.PI / 2;
     this.scene.add(table);
@@ -109,16 +134,16 @@ class CoinFlipAnimator {
     const thickness = 0.08;
     const rim = new THREE.Mesh(
       new THREE.CylinderGeometry(radius, radius, thickness, 64, 1, true),
-      new THREE.MeshStandardMaterial({ color: 0xd8dce6, metalness: 0.55, roughness: 0.34 })
+      new THREE.MeshStandardMaterial({ color: new THREE.Color(palette.rim), metalness: 0.25, roughness: 0.6 })
     );
     this.coinGroup.add(rim);
 
-    const headsTex = makeCoinFaceTexture("|0⟩");
-    const tailsTex = makeCoinFaceTexture("|1⟩");
+    const headsTex = makeCoinFaceTexture("|0⟩", palette);
+    const tailsTex = makeCoinFaceTexture("|1⟩", palette);
     const faceGeom = new THREE.CircleGeometry(radius, 64);
     const top = new THREE.Mesh(
       faceGeom,
-      new THREE.MeshStandardMaterial({ map: headsTex, metalness: 0.32, roughness: 0.38 })
+      new THREE.MeshStandardMaterial({ map: headsTex, metalness: 0.1, roughness: 0.5 })
     );
     top.rotation.x = -Math.PI / 2;
     top.position.y = thickness / 2 + 0.002;
@@ -126,7 +151,7 @@ class CoinFlipAnimator {
 
     const bottom = new THREE.Mesh(
       faceGeom,
-      new THREE.MeshStandardMaterial({ map: tailsTex, metalness: 0.32, roughness: 0.38 })
+      new THREE.MeshStandardMaterial({ map: tailsTex, metalness: 0.1, roughness: 0.5 })
     );
     bottom.rotation.x = Math.PI / 2;
     bottom.position.y = -thickness / 2 - 0.002;
@@ -134,7 +159,7 @@ class CoinFlipAnimator {
 
     this.shadowMesh = new THREE.Mesh(
       new THREE.CircleGeometry(radius * 1.5, 48),
-      new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.24, depthWrite: false })
+      new THREE.MeshBasicMaterial({ color: new THREE.Color(palette.text), transparent: true, opacity: palette.shadow, depthWrite: false })
     );
     this.shadowMesh.rotation.x = -Math.PI / 2;
     this.shadowMesh.position.y = 0.001;
@@ -151,6 +176,7 @@ class CoinFlipAnimator {
   }
 
   _resetScene() {
+    this.playing = false;
     if (this.renderer?.domElement?.parentNode) {
       this.renderer.domElement.parentNode.removeChild(this.renderer.domElement);
     }
@@ -160,6 +186,8 @@ class CoinFlipAnimator {
     this.camera = null;
     this.coinGroup = null;
     this.shadowMesh = null;
+    this._resolve?.();
+    this._resolve = null;
   }
 
   resize() {
@@ -245,7 +273,7 @@ class CoinFlipAnimator {
     this.coinGroup.scale.set(1 + squash * 0.25, 1 - squash * 0.35, 1 + squash * 0.25);
 
     const shadowScale = 1 + arc * 0.32;
-    const shadowFade = Math.max(0.12, 0.42 - arc * 0.16);
+    const shadowFade = Math.max(0.12, (this._getPalette().shadow ?? 0.2) - arc * 0.12);
     this.shadowMesh.scale.set(shadowScale * 1.3, shadowScale * 1.1, 1);
     if (this.shadowMesh.material) this.shadowMesh.material.opacity = shadowFade;
 
@@ -277,7 +305,7 @@ class CoinFlipAnimator {
     }
   }
 
-  _applyOutcomeHighlight(outcome) {
+  _applyOutcomeHighlight() {
     if (this.statusEl) {
       this.statusEl.classList.add("coin-hit", "coin-pulse");
     }
@@ -285,6 +313,21 @@ class CoinFlipAnimator {
       this.oddsEl.classList.add("coin-miss");
     }
   }
+
+  setTheme(theme) {
+    this.theme = theme === "light" ? "light" : "dark";
+    this._resetScene();
+    requestAnimationFrame(() => this.init());
+  }
+
+  _getPalette() {
+    const base = COIN_THEMES[this.theme] || COIN_THEMES.dark;
+    return {
+      ...base,
+      table: getCssColor("--bg", base.table),
+      text: base.text,
+    };
+  }
 }
 
-export { CoinFlipAnimator, makeCoinFaceTexture };
+export { CoinFlipAnimator };

@@ -3,17 +3,19 @@
    ========================= */
 #circuitCanvas{
   height: 100%;
-  padding: 14px;
+  padding: 12px;
   box-sizing: border-box;
 }
 
 #circuit-grid{
   position: relative;
   height: 100%;
-  border-radius: 14px;
-  background: linear-gradient(135deg, rgba(255,255,255,0.04), rgba(255,255,255,0.015));
-  box-shadow: inset 0 0 0 1px var(--line), 0 16px 28px rgba(0,0,0,0.28);
-  backdrop-filter: blur(10px);
+  border-radius: 6px;
+  background:
+    repeating-linear-gradient(90deg, var(--pixel-grid), var(--pixel-grid) 1px, transparent 1px, transparent 6px),
+    repeating-linear-gradient(0deg, var(--pixel-grid), var(--pixel-grid) 1px, transparent 1px, transparent 6px),
+    var(--surface);
+  box-shadow: inset 0 0 0 2px var(--line), 0 0 0 2px var(--line), 6px 6px 0 var(--shadow);
   overflow: auto;
   resize: both;
   min-width: 420px;
@@ -26,16 +28,17 @@
   position: absolute;
   min-width: 140px;
   padding: 10px;
-  border-radius: 12px;
-  background: rgba(22,24,28,0.96);
-  box-shadow: 0 18px 40px rgba(0,0,0,0.42), 0 0 0 1px rgba(245,245,245,0.12);
+  border-radius: 4px;
+  background: var(--surface);
+  box-shadow: 0 0 0 2px var(--line), 6px 6px 0 var(--shadow);
   color: var(--text);
   z-index: 5000;
   display: none;
+  border: 2px solid var(--line-strong);
 }
 #initStateMenu.on{ display: block; }
 #initStateMenu .init-title{
-  font-size: 0.78rem;
+  font-size: 0.62rem;
   letter-spacing: 0.04em;
   color: var(--muted);
   margin-bottom: 8px;
@@ -47,16 +50,18 @@
 #initStateMenu button{
   flex: 1;
   border: 0;
-  border-radius: 10px;
-  padding: 6px 8px;
-  background: rgba(245,245,245,0.08);
+  border-radius: 4px;
+  padding: 8px 8px;
+  background: var(--surface2);
   color: var(--text);
   cursor: pointer;
   font-weight: 700;
+  border: 2px solid var(--line-strong);
+  box-shadow: 0 0 0 2px var(--line);
 }
 #initStateMenu button:hover{
-  background: rgba(245,245,245,0.16);
-  box-shadow: 0 0 0 1px var(--glow), 0 8px 16px rgba(0,0,0,0.32);
+  background: var(--surface);
+  box-shadow: 0 0 0 2px var(--accent-strong), 0 0 0 2px var(--line);
 }
 
 #circuit-canvas{ position: relative; }
@@ -77,7 +82,7 @@
   position: absolute;
   left: 8px;
   width: 80px;
-  font-size: 0.88rem;
+  font-size: 0.74rem;
   color: var(--text);
   opacity: 0.90;
   cursor: pointer;
@@ -88,35 +93,44 @@
   position: absolute;
   left: 8px;
   width: 80px;
-  font-size: 0.90rem;
-  font-family: "Times New Roman", Georgia, serif;
-  letter-spacing: 0.03em;
+  font-size: 0.78rem;
+  font-family: "Press Start 2P", "Courier New", monospace;
+  letter-spacing: 0.02em;
   color: var(--text);
   cursor: pointer;
   transition: color 0.12s ease;
 }
 .cwire-label:hover,
 .cwire-ket:hover{
-  color: #ffffff;
+  color: var(--accent-strong);
 }
 
 .cstep-highlight{
   position: absolute;
   top: 0;
   bottom: 0;
-  background: rgba(245,245,245,0.00);
+  background: transparent;
   pointer-events: none;
+  transition: background 0.12s ease, box-shadow 0.12s ease, opacity 0.12s ease;
 }
-.cstep-highlight.on{ background: rgba(245,245,245,0.04); }
+.cstep-highlight.on{
+  background:
+    repeating-linear-gradient(90deg, var(--pixel-grid-strong), var(--pixel-grid-strong) 2px, transparent 2px, transparent 10px),
+    var(--pixel-grid);
+  box-shadow:
+    inset 0 0 0 2px var(--accent-strong),
+    inset 0 0 0 4px var(--line),
+    0 0 0 2px var(--line);
+  opacity: 0.9;
+}
 
 .cdrop-highlight{
   position: absolute;
   width: 46px;
   height: 46px;
-  border-radius: 12px;
-  background: rgba(245,245,245,0.06);
-  box-shadow: inset 0 0 0 2px var(--circuit-gate-border), 0 0 0 1px var(--circuit-gate-glow);
-  backdrop-filter: blur(6px);
+  border-radius: 4px;
+  background: var(--surface2);
+  box-shadow: inset 0 0 0 2px var(--circuit-gate-border), 0 0 0 2px var(--circuit-gate-glow);
   opacity: 0;
   pointer-events: none;
   transform: translate(-9999px, -9999px);
@@ -134,7 +148,7 @@
   position: absolute;
   width: 42px;
   height: 42px;
-  border-radius: 10px;
+  border-radius: 4px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -145,18 +159,17 @@
   background: var(--circuit-gate-bg);
   color: var(--text);
   border: 2px solid var(--circuit-gate-border);
-  box-shadow: 0 0 0 1px rgba(245,245,245,0.22), 0 12px 28px rgba(0,0,0,0.42);
-  backdrop-filter: blur(6px);
-  transition: transform 0.08s ease, box-shadow 0.12s ease, background 0.12s ease;
+  box-shadow: 0 0 0 2px var(--line), 4px 4px 0 var(--shadow);
+  transition: transform 0.08s ease, box-shadow 0.12s ease, background 0.12s ease, color 0.12s ease;
+  transform: translate(-50%, -50%);
 }
 .cgate:hover{
-  box-shadow: 0 0 0 1px var(--circuit-gate-glow), 0 12px 28px rgba(0,0,0,0.48);
+  box-shadow: 0 0 0 2px var(--accent-strong), 4px 4px 0 var(--shadow);
+  background: var(--surface2);
 }
 .cgate:active{ cursor: grabbing; transform: translateY(1px); }
 .cgate[data-gate="H"]{
-  font-family: "Times New Roman", Georgia, serif;
-  font-style: italic;
-  font-size: 1.1rem;
+  font-size: 1rem;
 }
 .cx-node{
   background: transparent;
@@ -165,13 +178,13 @@
 }
 .cgate-measure{
   border: 2px solid var(--circuit-gate-border);
-  background: rgba(245,245,245,0.04);
-  box-shadow: 0 0 0 1px rgba(245,245,245,0.18), 0 10px 26px rgba(0,0,0,0.36);
+  background: var(--surface2);
+  box-shadow: 0 0 0 2px var(--line), 4px 4px 0 var(--shadow);
 }
 
-.ccontrol{ width: 12px; height: 12px; border-radius: 999px; background: var(--circuit-gate-border); }
+.ccontrol{ width: 12px; height: 12px; border-radius: 2px; background: var(--circuit-gate-border); }
 .ctarget{
-  width: 20px; height: 20px; border-radius: 999px;
+  width: 20px; height: 20px; border-radius: 2px;
   box-shadow: inset 0 0 0 2px var(--circuit-gate-border);
   position: relative;
 }
@@ -188,23 +201,24 @@
 
 .measure-icon{
   width: 26px;
-  height: 26px;
+  height: 22px;
   position: relative;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 .measure-icon::before{
   content: "";
   position: absolute;
   left: 4px;
   right: 4px;
-  bottom: 6px;
-  height: 12px;
+  top: 10px;
+  height: 8px;
   border: 2px solid var(--circuit-gate-border);
-  border-top: none;
-  border-left-color: transparent;
-  border-right-color: transparent;
-  border-radius: 50% 50% 0 0;
-  transform: rotate(-4deg);
-  opacity: 0.9;
+  border-bottom: none;
+  border-radius: 10px 10px 0 0;
+  background: transparent;
 }
 .measure-icon::after{
   content: "";
@@ -214,18 +228,24 @@
   width: 2px;
   height: 18px;
   background: var(--circuit-gate-border);
-  transform: translateX(-50%) rotate(24deg);
+  transform: translateX(-50%) rotate(28deg);
   transform-origin: bottom;
   opacity: 0.9;
+  box-shadow: 0 10px 0 0 var(--surface2);
 }
 
 /* Gate color system (ONLY on chips) */
-.gate-x{ background: #ff7a7a; color: #0b0c0e; border-color: #ffc2c2; box-shadow: 0 0 0 1px #ffc2c2, 0 12px 26px rgba(0,0,0,0.42); }
-.gate-y{ background: #6bffb4; color: #0b0c0e; border-color: #b8ffd8; box-shadow: 0 0 0 1px #b8ffd8, 0 12px 26px rgba(0,0,0,0.42); }
-.gate-z{ background: #7fb2ff; color: #0b0c0e; border-color: #c3d8ff; box-shadow: 0 0 0 1px #c3d8ff, 0 12px 26px rgba(0,0,0,0.42); }
-.gate-h{ background: #ffd974; color: #0b0c0e; border-color: #ffe7a8; box-shadow: 0 0 0 1px #ffe7a8, 0 12px 26px rgba(0,0,0,0.42); }
-.gate-s{ background: #d5d5ff; color: #0b0c0e; border-color: #ededff; box-shadow: 0 0 0 1px #ededff, 0 12px 26px rgba(0,0,0,0.42); }
-.gate-t{ background: #ffc2e0; color: #0b0c0e; border-color: #ffd8ec; box-shadow: 0 0 0 1px #ffd8ec, 0 12px 26px rgba(0,0,0,0.42); }
+.gate-x,
+.gate-y,
+.gate-z,
+.gate-h,
+.gate-s,
+.gate-t{
+  background: var(--accent-strong);
+  color: var(--surface);
+  border-color: var(--accent-strong);
+  box-shadow: 0 0 0 2px var(--line), 4px 4px 0 var(--shadow);
+}
 .gate-m{ background: var(--circuit-gate-bg); border-color: var(--circuit-gate-border); color: var(--text); }
 
 /* =========================
@@ -237,13 +257,13 @@
   bottom: 18px;
   width: var(--gateLibW);
   max-width: calc(100vw - 36px);
-  border-radius: 14px;
-  background: rgba(22,24,28,0.94);
-  backdrop-filter: blur(12px);
-  box-shadow: 0 18px 60px rgba(0,0,0,0.45);
+  border-radius: 6px;
+  background: var(--surface);
+  box-shadow: 0 0 0 2px var(--line), 6px 6px 0 var(--shadow);
   padding: 10px;
   z-index: 4000;
   display: block; /* always visible */
+  border: 2px solid var(--line-strong);
 }
 
 .floating-header{
@@ -254,13 +274,12 @@
   padding: 4px 4px 6px 4px;
 }
 .floating-title{
-  font-size: 0.72rem;
+  font-size: 0.62rem;
   color: var(--muted);
-  letter-spacing: 0.10em;
-  text-transform: uppercase;
+  letter-spacing: 0.08em;
 }
 .floating-hint{
-  font-size: 0.78rem;
+  font-size: 0.62rem;
   color: var(--muted);
   opacity: 0.85;
   white-space: nowrap;
@@ -270,10 +289,17 @@
   margin: 4px 4px 10px 4px;
   padding: 8px 10px;
   border-radius: 12px;
-  background: rgba(245,245,245,0.03);
+  background: var(--surface2);
   color: var(--text);
   min-height: 56px;
   overflow-x: auto;
+  border: 2px solid var(--line-strong);
+}
+.gate-desc{
+  font-size: 0.62rem;
+  color: var(--pop-cyan);
+  margin-bottom: 6px;
+  letter-spacing: 0.02em;
 }
 
 .gate-library-grid{
@@ -285,17 +311,18 @@
 
 /* palette items created by JS */
 .palette-gate{
-  border-radius: 12px;
-  background: rgba(245,245,245,0.04);
+  border-radius: 6px;
+  background: var(--surface2);
   padding: 6px;
   cursor: grab;
+  border: 2px solid var(--line-strong);
 }
 .palette-gate:active{ cursor: grabbing; }
 
 .gate-box{
   width: 46px;
   height: 34px;
-  border-radius: 12px;
+  border-radius: 4px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -303,10 +330,10 @@
   border: 2px solid var(--circuit-gate-border);
   background: var(--circuit-gate-bg);
   color: var(--text);
-  box-shadow: 0 0 0 1px rgba(245,245,245,0.12), 0 8px 18px rgba(0,0,0,0.32);
+  box-shadow: 0 0 0 2px var(--line), 4px 4px 0 var(--shadow);
 }
 .palette-gate:hover .gate-box{
-  box-shadow: 0 0 0 1px var(--circuit-gate-glow), 0 0 14px var(--circuit-gate-glow);
-  background: rgba(245,245,245,0.10);
+  box-shadow: 0 0 0 2px var(--accent-strong), 4px 4px 0 var(--shadow);
+  background: var(--surface2);
 }
 .gate-box.gate-measure .measure-icon{ transform: translateY(1px); }

@@ -10,13 +10,18 @@
   <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
 </head>
 
-<body>
+<body data-theme="dark">
   <div id="qubit-visualizer">
     <!-- =========================
          Topbar (always visible)
          ========================= -->
     <header id="topbar" role="banner">
       <div id="title" aria-label="App title">Qubit Visualizer</div>
+
+      <button id="themeToggle" class="icon-btn" title="Toggle pixel dark/light mode" aria-label="Toggle theme">
+        <span class="ico">PX</span>
+        <span id="themeToggleLabel">Dark</span>
+      </button>
 
       <div class="spacer"></div>
 
@@ -77,7 +82,7 @@
 
           <div class="menu-group" role="none">
             <div class="menu-label">Settings…</div>
-            <button class="menu-item" id="menuTheme" role="menuitem">Theme</button>
+            <button class="menu-item" id="menuTheme" role="menuitem">Toggle theme</button>
             <button class="menu-item" id="menuShortcuts" role="menuitem">Shortcuts</button>
             <button class="menu-item" id="menuSimulation" role="menuitem">Simulation</button>
           </div>
@@ -140,11 +145,11 @@
               <span class="micro-pill">Flip anim</span>
             </label>
 
-            <label class="micro-slider" title="Adjust Bloch tile size">
-              <span class="micro-pill">Tile size</span>
-              <input id="blochTileSize" type="range" min="160" max="520" step="10" value="320" />
+              <label class="micro-slider" title="Adjust Bloch tile size">
+                <span class="micro-pill">Tile size</span>
+              <input id="blochTileSize" type="range" min="120" max="520" step="10" value="320" />
               <span id="blochTileSizeVal" class="micro-pill size-val">320px</span>
-            </label>
+              </label>
 
             <button id="openProbPopover" class="micro-btn" title="Probabilities">
               Probs
